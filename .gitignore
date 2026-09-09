@@ -1,0 +1,36 @@
+# Build outputs
+bin/
+obj/
+[Bb]in/
+[Oo]bj/
+
+# .NET / C# build artifacts
+*.user
+*.suo
+*.nupkg
+*.snupkg
+
+# C++ build artifacts
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.lib
+*.dll
+*.exe
+*.aps
+*.tlog
+*.lastbuildstate
+
+# IDE / editor
+.vs/
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store

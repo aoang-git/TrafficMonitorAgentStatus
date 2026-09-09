@@ -1,0 +1,100 @@
+{
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "timeout": 5,
+            "type": "command",
+            "command": "\"C:/Users/renxi/Documents/Codex/2026-09-10/wai/work/project/build/current/AgentStatus/AgentStatusEmit.exe\" --source claude-code"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "timeout": 5,
+            "type": "command",
+            "command": "\"C:/Users/renxi/Documents/Codex/2026-09-10/wai/work/project/build/current/AgentStatus/AgentStatusEmit.exe\" --source claude-code"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "timeout": 5,
+            "type": "command",
+            "command": "\"C:/Users/renxi/Documents/Codex/2026-09-10/wai/work/project/build/current/AgentStatus/AgentStatusEmit.exe\" --source claude-code"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "timeout": 5,
+            "type": "command",
+            "command": "\"C:/Users/renxi/Documents/Codex/2026-09-10/wai/work/project/build/current/AgentStatus/AgentStatusEmit.exe\" --source claude-code"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "timeout": 5,
+            "type": "command",
+            "command": "\"C:/Users/renxi/Documents/Codex/2026-09-10/wai/work/project/build/current/AgentStatus/AgentStatusEmit.exe\" --source claude-code"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "timeout": 5,
+            "type": "command",
+            "command": "\"C:/Users/renxi/Documents/Codex/2026-09-10/wai/work/project/build/current/AgentStatus/AgentStatusEmit.exe\" --source claude-code"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "timeout": 5,
+            "type": "command",
+            "command": "\"C:/Users/renxi/Documents/Codex/2026-09-10/wai/work/project/build/current/AgentStatus/AgentStatusEmit.exe\" --source claude-code"
+          }
+        ],
+        "matcher": ""
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "timeout": 5,
+            "type": "command",
+            "command": "\"C:/Users/renxi/Documents/Codex/2026-09-10/wai/work/project/build/current/AgentStatus/AgentStatusEmit.exe\" --source claude-code"
+          }
+        ],
+        "matcher": ""
+      }
+    ]
+  }
+}

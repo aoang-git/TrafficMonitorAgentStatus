@@ -1,0 +1,1 @@
+TMAS integration fixture: read-only test.

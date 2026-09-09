@@ -1,0 +1,8 @@
+api=6 value=待授权1
+PASS: ABI, getters, concurrent refresh, unload cycles=10
+{
+  "result": "PASS",
+  "session": "integration-5035f9d9ab4640fbb08263ed53fb0e7a",
+  "events": 69,
+  "emit_process_p95_ms": 19.8
+}
