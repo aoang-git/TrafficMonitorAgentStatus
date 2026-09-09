@@ -29,6 +29,7 @@ public static class Adapters
             "PostToolUse" or "postToolUse" or "AfterTool" => "tool.finished",
             "PostToolUseFailure" or "postToolUseFailure" => "tool.failed",
             "PermissionRequest" => "permission.requested",
+            "PermissionDenied" => "permission.resolved",
             "Stop" or "stop" or "AfterAgent" => "turn.finished",
             "StopFailure" => "turn.failed",
             "TaskCompleted" => "task.completed",

@@ -13,8 +13,8 @@
 namespace {
 HMODULE moduleHandle;
 SRWLOCK cacheLock = SRWLOCK_INIT;
-std::wstring value = L"未连接";
-std::wstring tooltip = L"Agent 状态接收器未连接；点击查看详情";
+std::wstring value;
+std::wstring tooltip = L"无活动 Agent";
 
 std::wstring MappingName() {
     HANDLE token = nullptr;
@@ -54,9 +54,9 @@ class Item final : public IPluginItem {
 public:
     const wchar_t* GetItemName() const override { return L"Agent 状态"; }
     const wchar_t* GetItemId() const override { return L"TMASAgentStatusV1"; }
-    const wchar_t* GetItemLableText() const override { return L"AI: "; }
+    const wchar_t* GetItemLableText() const override { return L""; }
     const wchar_t* GetItemValueText() const override { return Cached(false); }
-    const wchar_t* GetItemValueSampleText() const override { return L"待授权99 · 运行99"; }
+    const wchar_t* GetItemValueSampleText() const override { return L"Claudecode:调用工具"; }
     int OnMouseEvent(MouseEventType type, int, int, void* window, int) override {
         if (type == MT_LCLICKED) { OpenDetails(static_cast<HWND>(window)); return 1; }
         return 0;
@@ -69,7 +69,7 @@ public:
     IPluginItem* GetItem(int index) override { return index == 0 ? &item : nullptr; }
     void DataRequired() override {
         try {
-            std::wstring next = L"未连接", tip = L"Agent 状态接收器未连接；点击查看详情";
+            std::wstring next, tip = L"无活动 Agent";
             auto name = MappingName();
             HANDLE map = name.empty() ? nullptr : OpenFileMappingW(FILE_MAP_READ, FALSE, name.c_str());
             if (map) {

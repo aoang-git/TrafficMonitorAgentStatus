@@ -77,6 +77,8 @@ public sealed class Server
     public async Task Run(CancellationToken ct)
     {
         using var snapshot = new SnapshotMap();
+        var codexDesktop = new CodexDesktopWatcher(state);
+        var codexDesktopTask = codexDesktop.Run(ct);
         // A fixed pool bounds concurrent connections and slow clients.
         var workers = Enumerable.Range(0, 8).Select(_ => Listen(ct)).ToArray();
         try
@@ -85,7 +87,13 @@ public sealed class Server
             do { snapshot.Publish(state.GetSnapshot()); } while (await timer.WaitForNextTickAsync(ct));
         }
         catch (OperationCanceledException) { }
-        finally { await Task.WhenAll(workers); }
+        finally
+        {
+            try { await Task.WhenAll(workers); }
+            catch (OperationCanceledException) { }
+            try { await codexDesktopTask; }
+            catch (OperationCanceledException) { }
+        }
     }
     async Task Listen(CancellationToken ct)
     {
