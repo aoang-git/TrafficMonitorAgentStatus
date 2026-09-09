@@ -59,4 +59,17 @@ Check(permission.Single().EventType == "permission.requested" && question.Single
 var desktopState = new StateStore();
 foreach (var e in started.Concat(tool).Concat(toolOutput).Concat(completed)) desktopState.Apply(e);
 Check(desktopState.GetSnapshot().Text == "Codex:本轮完成", "Codex desktop display source");
+var settingsPath = Path.Combine(Path.GetTempPath(), "tmas-settings-" + Guid.NewGuid().ToString("N") + ".json");
+var settingsStore = new SettingsStore(settingsPath);
+settingsStore.Save(new AgentStatusSettings { ShowSource = false, CompletionToastMs = 1000, MaxWorkingMs = 60000, CodexPollIntervalMs = 200 });
+Check(!settingsStore.Current.ShowSource && settingsStore.Current.CompletionToastMs == 1000 && settingsStore.Current.CodexPollIntervalMs == 200, "settings save and reload");
+var configurable = new StateStore(() => clock, settingsStore);
+configurable.Apply(E("turn.started", turn: "settings-turn"));
+Check(configurable.GetSnapshot().Text == "工作中", "source visibility setting");
+clock = 0;
+configurable.Apply(E("turn.finished", turn: "settings-turn"));
+clock = 1001;
+Check(configurable.GetSnapshot().Text == "", "completion duration setting");
+settingsStore.Save(new AgentStatusSettings { CompletionToastMs = 999999, MaxWorkingMs = 1, CodexPollIntervalMs = 99999 });
+Check(settingsStore.Current.CompletionToastMs == 60000 && settingsStore.Current.MaxWorkingMs == 30000 && settingsStore.Current.CodexPollIntervalMs == 3000, "settings bounds");
 Console.WriteLine($"TOTAL {passed} passed");

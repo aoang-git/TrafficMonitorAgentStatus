@@ -73,11 +73,15 @@ public static class Wire
 
 public sealed class Server
 {
-    readonly StateStore state = new();
+    readonly SettingsStore settings = new();
+    readonly StateStore state;
+
+    public Server() { state = new StateStore(settings: settings); }
+
     public async Task Run(CancellationToken ct)
     {
         using var snapshot = new SnapshotMap();
-        var codexDesktop = new CodexDesktopWatcher(state);
+        var codexDesktop = new CodexDesktopWatcher(state, settings);
         var codexDesktopTask = codexDesktop.Run(ct);
         // A fixed pool bounds concurrent connections and slow clients.
         var workers = Enumerable.Range(0, 8).Select(_ => Listen(ct)).ToArray();

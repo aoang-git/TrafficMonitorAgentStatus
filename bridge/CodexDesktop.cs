@@ -164,11 +164,19 @@ public sealed class CodexDesktopParser
     }
 }
 
-public sealed class CodexDesktopWatcher(StateStore state)
+public sealed class CodexDesktopWatcher
 {
     const int InitialTailBytes = 512 * 1024;
+    readonly StateStore state;
+    readonly SettingsStore settings;
     readonly string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "sessions");
     readonly Dictionary<string, Cursor> cursors = new(StringComparer.OrdinalIgnoreCase);
+
+    public CodexDesktopWatcher(StateStore state, SettingsStore? settings = null)
+    {
+        this.state = state;
+        this.settings = settings ?? new SettingsStore();
+    }
 
     public async Task Run(CancellationToken ct)
     {
@@ -176,7 +184,7 @@ public sealed class CodexDesktopWatcher(StateStore state)
         {
             try { Scan(); }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or DirectoryNotFoundException) { Diagnostics.Write("codex-desktop", e.GetType().Name); }
-            try { await Task.Delay(750, ct); }
+            try { await Task.Delay(settings.Current.CodexPollIntervalMs, ct); }
             catch (OperationCanceledException) { }
         }
     }

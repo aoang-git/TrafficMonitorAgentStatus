@@ -58,19 +58,24 @@ public static class JsonWire
     public static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, PropertyNameCaseInsensitive = true, WriteIndented = false };
 }
 
-public sealed class StateStore(Func<long>? clock = null)
+public sealed class StateStore
 {
     readonly object gate = new();
-    readonly Func<long> now = clock ?? (() => Environment.TickCount64);
+    readonly Func<long> now;
+    readonly SettingsStore settings;
     readonly Dictionary<string, Session> sessions = [];
     readonly HashSet<string> ids = [];
     readonly Queue<string> idOrder = [];
     long accepted, rejected;
     readonly Dictionary<string, long> counts = [];
     const int MaxSessions = 128, MaxIds = 8192, MaxEntries = 256;
-    const long MaxWorkingMs = 10 * 60 * 1000;
-    const long CompletionToastMs = 5000;
     public static readonly HashSet<string> Types = ["session.started", "session.ended", "turn.started", "execution.resumed", "tool.started", "tool.finished", "tool.failed", "input.requested", "input.resolved", "permission.requested", "permission.resolved", "turn.finished", "turn.failed", "task.completed", "session.unknown"];
+
+    public StateStore(Func<long>? clock = null, SettingsStore? settings = null)
+    {
+        now = clock ?? (() => Environment.TickCount64);
+        this.settings = settings ?? new SettingsStore();
+    }
 
     static string DisplaySource(string source) => source switch
     {
@@ -201,11 +206,12 @@ public sealed class StateStore(Func<long>? clock = null)
         lock (gate)
         {
             var timestamp = now();
+            var config = settings.Current;
             foreach (var s in sessions.Values)
             {
                 // Waiting for a user is intentionally unbounded. Only a silent
                 // working state expires, so a missing Stop cannot stay visible forever.
-                if (s.Working && s.Requests.Count == 0 && timestamp - s.LastSeen > MaxWorkingMs)
+                if (s.Working && s.Requests.Count == 0 && timestamp - s.LastSeen > config.MaxWorkingMs)
                 {
                     s.Working = false;
                     s.Tools.Clear();
@@ -219,14 +225,18 @@ public sealed class StateStore(Func<long>? clock = null)
             if (visible == null)
             {
                 visible = views.Where(x => x.State is "任务完成" or "本轮完成")
-                    .Where(x => sessions[x.Key].CompletedAt >= 0 && timestamp - sessions[x.Key].CompletedAt < CompletionToastMs)
+                    .Where(x => sessions[x.Key].CompletedAt >= 0 && timestamp - sessions[x.Key].CompletedAt < config.CompletionToastMs)
                     .OrderByDescending(x => x.UpdatedAt)
                     .FirstOrDefault();
             }
-            string text = visible == null ? "" : $"{DisplaySource(visible.Source)}:{visible.State}";
+            string text = visible == null ? "" : FormatText(visible, config.ShowSource);
             string tip = visible == null ? "无活动 Agent" : string.Join("\n", views.Where(x => x.State != "空闲" && x.State != "会话结束").Take(12).Select(x => $"{DisplaySource(x.Source)} | {(x.Project.Length > 0 ? x.Project : x.SessionId)} | {x.State} | {x.UpdatedAt.ToLocalTime():HH:mm:ss}"));
             if (views.Count > 12) tip += $"\n另有 {views.Count - 12} 个会话；点击查看";
             return new(text, tip, views, accepted, rejected, new(counts));
         }
     }
+
+    static string FormatText(SessionView view, bool showSource) => showSource
+        ? $"{DisplaySource(view.Source)}:{view.State}"
+        : view.State;
 }
