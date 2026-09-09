@@ -5,12 +5,12 @@ namespace AgentStatus;
 public sealed class DetailsForm : Form
 {
     readonly SettingsStore settings = new();
-    readonly Label heading = new() { Dock = DockStyle.Top, Height = 56, Padding = new Padding(14), Text = "正在连接…", Font = new Font("Microsoft YaHei UI", 13) };
+    readonly Label heading = new() { Dock = DockStyle.Top, Height = 78, Padding = new Padding(14), AutoEllipsis = true, Text = "正在连接…", Font = new Font("Microsoft YaHei UI", 13) };
     readonly FlowLayoutPanel settingsPanel = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(0, 70), Padding = new Padding(8, 5, 8, 5), WrapContents = true, AutoScroll = false };
     readonly CheckBox showSource = new() { Text = "显示来源", AutoSize = true, Margin = new Padding(4, 7, 10, 3) };
-    readonly NumericUpDown completionSeconds = new() { Minimum = 0, Maximum = 60, DecimalPlaces = 0, Width = 55, Margin = new Padding(2, 3, 10, 3) };
-    readonly NumericUpDown maxWorkingMinutes = new() { Minimum = 1, Maximum = 120, DecimalPlaces = 0, Width = 55, Margin = new Padding(2, 3, 10, 3) };
-    readonly NumericUpDown pollIntervalMs = new() { Minimum = 200, Maximum = 3000, Increment = 50, Width = 70, Margin = new Padding(2, 3, 10, 3) };
+    readonly NumericUpDown completionSeconds = new() { Minimum = 0, Maximum = 60, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
+    readonly NumericUpDown maxWorkingMinutes = new() { Minimum = 1, Maximum = 120, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
+    readonly NumericUpDown pollIntervalMs = new() { Minimum = 200, Maximum = 3000, Increment = 50, Width = 100, Margin = new Padding(2, 3, 10, 3) };
     readonly Label settingsStatus = new() { AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(4, 8, 4, 3) };
     readonly DataGridView table = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoGenerateColumns = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false, BackgroundColor = SystemColors.Window };
     readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
