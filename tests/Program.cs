@@ -72,4 +72,17 @@ clock = 1001;
 Check(configurable.GetSnapshot().Text == "", "completion duration setting");
 settingsStore.Save(new AgentStatusSettings { CompletionToastMs = 999999, MaxWorkingMs = 1, CodexPollIntervalMs = 99999 });
 Check(settingsStore.Current.CompletionToastMs == 60000 && settingsStore.Current.MaxWorkingMs == 30000 && settingsStore.Current.CodexPollIntervalMs == 3000, "settings bounds");
+settingsStore.Save(settingsStore.Current with
+{
+    ShowSource = true,
+    EnabledSources = new Dictionary<string, bool> { ["claude-code"] = false, ["codex-desktop"] = true },
+    DisplayTexts = new Dictionary<string, string> { ["working"] = "处理中" }
+});
+var filtered = new StateStore(settings: settingsStore);
+filtered.Apply(E("turn.started", "claude", turn: "hidden") with { Source = "claude-code" });
+filtered.Apply(E("turn.started", "codex", turn: "shown") with { Source = "codex-desktop" });
+Check(filtered.GetSnapshot().Text == "Codex:处理中" && filtered.GetSnapshot().Sessions.Count == 1, "source filter and custom text");
+var hiddenOnly = new StateStore(settings: settingsStore);
+hiddenOnly.Apply(E("turn.started", "claude-only", turn: "hidden-only") with { Source = "claude-code" });
+Check(hiddenOnly.GetSnapshot().Text == "" && hiddenOnly.GetSnapshot().Sessions.Count == 0, "hidden source is not displayed");
 Console.WriteLine($"TOTAL {passed} passed");

@@ -219,7 +219,12 @@ public sealed class StateStore
                     s.LastNotice = "工作状态超时，等待新的 Hook";
                 }
             }
-            var views = sessions.Values.OrderByDescending(s => s.Requests.Count > 0).ThenByDescending(s => s.LastSeen).Select(s => new SessionView(s.Key, s.Source, s.Project, s.SessionId, s.DisplayState, s.Tools.Count, s.Requests.Values.Count(v => v == "permission"), s.Requests.Values.Count(v => v == "input"), s.UpdatedAt, s.LastNotice)).ToList();
+            var views = sessions.Values
+                .Where(s => config.EnabledSources.GetValueOrDefault(s.Source, true))
+                .OrderByDescending(s => s.Requests.Count > 0)
+                .ThenByDescending(s => s.LastSeen)
+                .Select(s => new SessionView(s.Key, s.Source, s.Project, s.SessionId, s.DisplayState, s.Tools.Count, s.Requests.Values.Count(v => v == "permission"), s.Requests.Values.Count(v => v == "input"), s.UpdatedAt, s.LastNotice))
+                .ToList();
             int Priority(SessionView x) => x.State switch { "待授权" => 0, "待回答" => 1, "异常" => 2, "调用工具" => 3, "工作中" => 4, "状态未知" => 5, "任务完成" => 6, "本轮完成" => 7, _ => 99 };
             var visible = views.Where(x => IsActive(x.State)).OrderBy(Priority).ThenByDescending(x => x.UpdatedAt).FirstOrDefault();
             if (visible == null)
@@ -229,14 +234,27 @@ public sealed class StateStore
                     .OrderByDescending(x => x.UpdatedAt)
                     .FirstOrDefault();
             }
-            string text = visible == null ? "" : FormatText(visible, config.ShowSource);
+            string text = visible == null ? "" : FormatText(visible, config.ShowSource, config);
             string tip = visible == null ? "无活动 Agent" : string.Join("\n", views.Where(x => x.State != "空闲" && x.State != "会话结束").Take(12).Select(x => $"{DisplaySource(x.Source)} | {(x.Project.Length > 0 ? x.Project : x.SessionId)} | {x.State} | {x.UpdatedAt.ToLocalTime():HH:mm:ss}"));
             if (views.Count > 12) tip += $"\n另有 {views.Count - 12} 个会话；点击查看";
             return new(text, tip, views, accepted, rejected, new(counts));
         }
     }
 
-    static string FormatText(SessionView view, bool showSource) => showSource
-        ? $"{DisplaySource(view.Source)}:{view.State}"
-        : view.State;
+    static string FormatText(SessionView view, bool showSource, AgentStatusSettings config) {
+        var key = view.State switch
+        {
+            "工作中" => "working",
+            "调用工具" => "tool",
+            "待授权" => "permission",
+            "待回答" => "input",
+            "本轮完成" => "turnCompleted",
+            "任务完成" => "taskCompleted",
+            "异常" => "error",
+            "状态未知" => "unknown",
+            _ => ""
+        };
+        var state = key.Length == 0 ? view.State : config.DisplayTexts.GetValueOrDefault(key, view.State);
+        return showSource ? $"{DisplaySource(view.Source)}:{state}" : state;
+    }
 }

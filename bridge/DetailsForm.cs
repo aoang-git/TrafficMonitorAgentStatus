@@ -36,6 +36,13 @@ public sealed class DetailsForm : Form
         var resetSettings = new Button { Text = "恢复默认", AutoSize = true, Margin = new Padding(4, 3, 4, 3) };
         resetSettings.Click += (_, _) => { settings.ResetToDefaults(); LoadSettingsIntoControls(); settingsStatus.Text = "已恢复默认设置"; };
         settingsPanel.Controls.Add(resetSettings);
+        var displaySettings = new Button { Text = "来源与文本设置", AutoSize = true, Margin = new Padding(4, 3, 4, 3) };
+        displaySettings.Click += (_, _) =>
+        {
+            using var dialog = new DisplaySettingsForm(settings);
+            dialog.ShowDialog(this);
+        };
+        settingsPanel.Controls.Add(displaySettings);
         settingsPanel.Controls.Add(settingsStatus);
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 43, Padding = new Padding(8) };
         var start = new Button { Text = "启动接收器", AutoSize = true };
@@ -86,7 +93,8 @@ public sealed class DetailsForm : Form
     {
         try
         {
-            settings.Save(new AgentStatusSettings
+            var current = settings.Current;
+            settings.Save(current with
             {
                 ShowSource = showSource.Checked,
                 CompletionToastMs = (int)completionSeconds.Value * 1000,

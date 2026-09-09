@@ -8,17 +8,66 @@ public sealed record AgentStatusSettings
     public int CompletionToastMs { get; init; } = 5000;
     public int MaxWorkingMs { get; init; } = 10 * 60 * 1000;
     public int CodexPollIntervalMs { get; init; } = 750;
+    public Dictionary<string, bool> EnabledSources { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> DisplayTexts { get; init; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public static AgentStatusSettings Defaults => new();
+    public static readonly IReadOnlyList<(string Id, string Label)> SourceDefinitions =
+    [
+        ("claude-code", "Claude Code"),
+        ("codex-desktop", "Codex 桌面版"),
+        ("cursor", "Cursor"),
+        ("gemini-cli", "Gemini CLI"),
+        ("generic", "通用来源")
+    ];
 
-    public AgentStatusSettings Normalize() => this with
+    public static readonly IReadOnlyList<(string Key, string Label, string DefaultText)> DisplayDefinitions =
+    [
+        ("working", "工作中", "工作中"),
+        ("tool", "调用工具", "调用工具"),
+        ("permission", "待授权", "待授权"),
+        ("input", "待回答", "待回答"),
+        ("turnCompleted", "本轮完成", "本轮完成"),
+        ("taskCompleted", "任务完成", "任务完成"),
+        ("error", "异常", "异常"),
+        ("unknown", "状态未知", "状态未知")
+    ];
+
+    public static AgentStatusSettings Defaults => new()
     {
-        CompletionToastMs = Math.Clamp(CompletionToastMs, 0, 60 * 1000),
+        EnabledSources = SourceDefinitions.ToDictionary(x => x.Id, _ => true, StringComparer.OrdinalIgnoreCase),
+        DisplayTexts = DisplayDefinitions.ToDictionary(x => x.Key, x => x.DefaultText, StringComparer.OrdinalIgnoreCase)
+    };
+
+    public AgentStatusSettings Normalize()
+    {
+        var enabled = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var source in SourceDefinitions) enabled[source.Id] = EnabledSources?.GetValueOrDefault(source.Id, true) ?? true;
+        if (EnabledSources != null)
+            foreach (var pair in EnabledSources) if (!enabled.ContainsKey(pair.Key)) enabled[pair.Key] = pair.Value;
+
+        var texts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var display in DisplayDefinitions) texts[display.Key] = CleanText(DisplayTexts?.GetValueOrDefault(display.Key), display.DefaultText);
+        if (DisplayTexts != null)
+            foreach (var pair in DisplayTexts)
+                if (!texts.ContainsKey(pair.Key)) texts[pair.Key] = CleanText(pair.Value, pair.Key);
+
+        return this with
+        {
+            CompletionToastMs = Math.Clamp(CompletionToastMs, 0, 60 * 1000),
         // A finite lower bound is intentional: silent work must not become an
         // immortal task-bar state when a source loses its stop event.
-        MaxWorkingMs = Math.Clamp(MaxWorkingMs, 30 * 1000, 2 * 60 * 60 * 1000),
-        CodexPollIntervalMs = Math.Clamp(CodexPollIntervalMs, 200, 3000)
-    };
+            MaxWorkingMs = Math.Clamp(MaxWorkingMs, 30 * 1000, 2 * 60 * 60 * 1000),
+            CodexPollIntervalMs = Math.Clamp(CodexPollIntervalMs, 200, 3000),
+            EnabledSources = enabled,
+            DisplayTexts = texts
+        };
+    }
+
+    static string CleanText(string? value, string fallback)
+    {
+        var clean = new string((value ?? "").Where(c => !char.IsControl(c)).ToArray()).Trim();
+        return clean.Length == 0 ? fallback : new string(clean.Take(32).ToArray());
+    }
 }
 
 public sealed class SettingsStore
