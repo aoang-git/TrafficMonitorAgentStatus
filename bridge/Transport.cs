@@ -113,7 +113,7 @@ public sealed class Server
                 object result;
                 switch (op)
                 {
-                    case "ping": result = new { ok = true, version = "0.1.2", pid = Environment.ProcessId }; break;
+                    case "ping": result = new { ok = true, version = "0.1.3", pid = Environment.ProcessId }; break;
                     case "snapshot": result = state.GetSnapshot(); break;
                     case "ack": result = new { ok = state.Acknowledge(root.GetProperty("key").GetString() ?? "") }; break;
                     case "emit":

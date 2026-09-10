@@ -107,7 +107,7 @@ public:
         case TMI_DESCRIPTION: return L"通过本机桥接显示 Agent 工作、工具调用与等待状态";
         case TMI_AUTHOR: return L"TrafficMonitorAgentStatus";
         case TMI_COPYRIGHT: return L"2026 TrafficMonitorAgentStatus contributors";
-        case TMI_VERSION: return L"0.1.2";
+        case TMI_VERSION: return L"0.1.3";
         case TMI_URL: return L"";
         default: return L"";
         }

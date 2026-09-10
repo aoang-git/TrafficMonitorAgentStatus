@@ -58,9 +58,10 @@ var tool = desktop.Parse("""{"timestamp":"2026-01-01T00:00:01Z","ordinal":2,"typ
 var toolOutput = desktop.Parse("""{"timestamp":"2026-01-01T00:00:02Z","ordinal":3,"type":"response_item","payload":{"type":"custom_tool_call_output","id":"item-1","call_id":"call-1","output":"ok"}}""", 3);
 var completed = desktop.Parse("""{"timestamp":"2026-01-01T00:00:03Z","ordinal":4,"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}""", 4);
 Check(started.Single().EventType == "turn.started" && tool.Single().EventType == "tool.started" && toolOutput.Single().EventType == "tool.finished" && completed.Single().EventType == "turn.finished", "Codex desktop lifecycle mapping");
-var permission = desktop.Parse("""{"timestamp":"2026-01-01T00:00:04Z","ordinal":5,"type":"response_item","payload":{"type":"custom_tool_call","id":"item-2","call_id":"call-2","name":"exec","input":"require_escalated"}}""", 5);
+var permissionWords = desktop.Parse("""{"timestamp":"2026-01-01T00:00:04Z","ordinal":5,"type":"response_item","payload":{"type":"custom_tool_call","id":"item-2","call_id":"call-2","name":"exec","input":"{\"sandbox_permissions\":\"use_default\",\"justification\":\"documented field\",\"note\":\"require_escalated\"}"}}""", 5);
 var question = desktop.Parse("""{"timestamp":"2026-01-01T00:00:05Z","ordinal":6,"type":"response_item","payload":{"type":"custom_tool_call","id":"item-3","call_id":"call-3","name":"request_user_input","input":"{}"}}""", 6);
-Check(permission.Single().EventType == "permission.requested" && question.Single().EventType == "input.requested", "Codex desktop approval and input mapping");
+Check(permissionWords.Single().EventType == "tool.started", "Codex desktop does not infer approval from tool input text");
+Check(question.Single().EventType == "input.requested", "Codex desktop structured input mapping");
 var desktopState = new StateStore(() => clock, isolatedSettings);
 foreach (var e in started.Concat(tool).Concat(toolOutput).Concat(completed)) desktopState.Apply(e);
 Check(desktopState.GetSnapshot().Text == "Codex:本轮完成", "Codex desktop display source");

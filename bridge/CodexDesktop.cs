@@ -80,10 +80,6 @@ public sealed class CodexDesktopParser
             {
                 events.Add(Event("input.requested", ordinal, callType, turn, occurredAt, name, callId, callId));
             }
-            else if (RequiresPermission(payload))
-            {
-                events.Add(Event("permission.requested", ordinal, callType, turn, occurredAt, name, callId, callId));
-            }
             else
             {
                 events.Add(Event("tool.started", ordinal, callType, turn, occurredAt, name, callId));
@@ -123,15 +119,6 @@ public sealed class CodexDesktopParser
         RequestId = request,
         OccurredAt = occurredAt
     };
-
-    static bool RequiresPermission(JsonElement payload)
-    {
-        if (!payload.TryGetProperty("input", out var input) || input.ValueKind != JsonValueKind.String) return false;
-        var text = input.GetString() ?? "";
-        return text.Contains("require_escalated", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("sandbox_permissions", StringComparison.OrdinalIgnoreCase)
-            || text.Contains("justification", StringComparison.OrdinalIgnoreCase);
-    }
 
     static bool TryRead(string line, out JsonElement root)
     {
