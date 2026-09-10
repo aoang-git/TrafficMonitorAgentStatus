@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using System.Collections.Concurrent;
 
 namespace AgentStatus;
 
@@ -14,6 +15,8 @@ public sealed class CodexDesktopParser
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     readonly Dictionary<string, string> tools = [];
+    readonly Queue<string> toolOrder = [];
+    const int MaxTrackedTools = 1024;
     public string FilePath { get; }
     public string SessionId { get; private set; }
     public string ProjectLabel { get; private set; } = "";
@@ -75,7 +78,12 @@ public sealed class CodexDesktopParser
             var callId = StringValue(payload, "call_id");
             if (callId.Length == 0) callId = StringValue(payload, "id");
             var name = StringValue(payload, "name");
-            if (callId.Length > 0 && name.Length > 0) tools[callId] = name;
+            if (callId.Length > 0 && name.Length > 0)
+            {
+                if (!tools.ContainsKey(callId)) toolOrder.Enqueue(callId);
+                tools[callId] = name;
+                while (toolOrder.Count > MaxTrackedTools) tools.Remove(toolOrder.Dequeue());
+            }
             if (name.Equals("request_user_input", StringComparison.OrdinalIgnoreCase))
             {
                 events.Add(Event("input.requested", ordinal, callType, turn, occurredAt, name, callId, callId));
@@ -153,46 +161,139 @@ public sealed class CodexDesktopParser
 
 public sealed class CodexDesktopWatcher
 {
-    const int InitialTailBytes = 512 * 1024;
+    const int RecoveryTailBytes = 8 * 1024 * 1024;
+    const int MaxReadBytesPerScan = 1024 * 1024;
+    const int MaxPendingLineBytes = 64 * 1024;
+    const int MaxCursors = 256;
+    const int MaxRecoveryEvents = 4096;
+    const long DiscoveryIntervalMs = 60 * 1000;
+    const long CursorIdleMs = 24 * 60 * 60 * 1000;
     readonly StateStore state;
     readonly SettingsStore settings;
-    readonly string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "sessions");
+    readonly string root;
     readonly Dictionary<string, Cursor> cursors = new(StringComparer.OrdinalIgnoreCase);
+    readonly ConcurrentDictionary<string, byte> dirty = new(StringComparer.OrdinalIgnoreCase);
+    FileSystemWatcher? watcher;
+    long nextDiscovery;
 
-    public CodexDesktopWatcher(StateStore state, SettingsStore? settings = null)
+    public CodexDesktopWatcher(StateStore state, SettingsStore? settings = null, string? root = null)
     {
         this.state = state;
         this.settings = settings ?? new SettingsStore();
+        this.root = root ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "sessions");
     }
+
+    public int TrackedFiles => cursors.Count;
 
     public async Task Run(CancellationToken ct)
     {
-        while (!ct.IsCancellationRequested)
+        try
         {
-            try { Scan(); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or DirectoryNotFoundException) { Diagnostics.Write("codex-desktop", e.GetType().Name); }
-            try { await Task.Delay(settings.Current.CodexPollIntervalMs, ct); }
-            catch (OperationCanceledException) { }
+            while (!ct.IsCancellationRequested)
+            {
+                TryStartWatcher();
+                try { ScanOnce(); }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or DirectoryNotFoundException) { Diagnostics.Write("codex-desktop", e.GetType().Name); }
+                try { await Task.Delay(settings.Current.CodexPollIntervalMs, ct); }
+                catch (OperationCanceledException) { }
+            }
+        }
+        finally { watcher?.Dispose(); }
+    }
+
+    void TryStartWatcher()
+    {
+        if (watcher != null || !Directory.Exists(root)) return;
+        try
+        {
+            watcher = new FileSystemWatcher(root, "rollout-*.jsonl")
+            {
+                IncludeSubdirectories = true,
+                NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size
+            };
+            watcher.Created += (_, e) => dirty[e.FullPath] = 0;
+            watcher.Changed += (_, e) => dirty[e.FullPath] = 0;
+            watcher.Renamed += (_, e) => dirty[e.FullPath] = 0;
+            watcher.EnableRaisingEvents = true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            watcher?.Dispose();
+            watcher = null;
+            Diagnostics.Write("codex-watcher", e.GetType().Name);
         }
     }
 
-    void Scan()
+    public void ScanOnce()
     {
         if (!Directory.Exists(root)) return;
-        foreach (var file in Directory.EnumerateFiles(root, "rollout-*.jsonl", SearchOption.AllDirectories))
+        var timestamp = Environment.TickCount64;
+        if (timestamp >= nextDiscovery)
         {
-            var info = new FileInfo(file);
-            if (!info.Exists) continue;
-            if (!cursors.TryGetValue(file, out var cursor))
-            {
-                cursor = new Cursor(file, Math.Max(0, info.Length - InitialTailBytes), state.Apply);
-                cursors[file] = cursor;
-                if (!ReadFirstMetadata(cursor)) continue;
-                cursor.Initializing = true;
-            }
+            DiscoverRecent();
+            nextDiscovery = timestamp + DiscoveryIntervalMs;
+        }
+        foreach (var path in dirty.Keys.ToArray())
+            if (dirty.TryRemove(path, out _)) EnsureCursor(path, timestamp);
+
+        foreach (var pair in cursors.ToArray())
+        {
+            var cursor = pair.Value;
+            var info = new FileInfo(cursor.Path);
+            if (!info.Exists) { cursors.Remove(pair.Key); continue; }
+            if (cursor.Offset >= info.Length && info.Length == cursor.ObservedLength && info.LastWriteTimeUtc == cursor.LastWriteUtc) continue;
+            cursor.ObservedLength = info.Length;
+            cursor.LastWriteUtc = info.LastWriteTimeUtc;
+            cursor.LastActivity = timestamp;
+            if (!cursor.MetadataConfirmed) cursor.MetadataConfirmed = ReadFirstMetadata(cursor);
             if (!cursor.IsDesktop) continue;
-            ReadAppended(cursor);
-            if (cursor.Initializing) FinishInitialReplay(cursor);
+            if (!cursor.Initializing && cursor.Offset == 0 && info.Length > 0) cursor.Initializing = true;
+            var caughtUp = ReadAppended(cursor, cursor.Initializing ? RecoveryTailBytes : MaxReadBytesPerScan);
+            if (cursor.Initializing && caughtUp) FinishInitialReplay(cursor);
+        }
+        EvictCursors(timestamp);
+    }
+
+    void DiscoverRecent()
+    {
+        var cutoff = DateTime.UtcNow.AddDays(-2);
+        var recent = Directory.EnumerateFiles(root, "rollout-*.jsonl", SearchOption.AllDirectories)
+            .Select(path => new FileInfo(path))
+            .Where(info => info.Exists && info.LastWriteTimeUtc >= cutoff)
+            .OrderByDescending(info => info.LastWriteTimeUtc)
+            .Take(MaxCursors)
+            .ToArray();
+        var timestamp = Environment.TickCount64;
+        foreach (var info in recent) EnsureCursor(info.FullName, timestamp);
+    }
+
+    void EnsureCursor(string path, long timestamp)
+    {
+        if (!Path.GetFileName(path).StartsWith("rollout-", StringComparison.OrdinalIgnoreCase) || !path.EndsWith(".jsonl", StringComparison.OrdinalIgnoreCase)) return;
+        if (cursors.ContainsKey(path)) return;
+        var info = new FileInfo(path);
+        if (!info.Exists) return;
+        if (cursors.Count >= MaxCursors)
+        {
+            var oldest = cursors.Values.OrderBy(x => x.LastWriteUtc).FirstOrDefault();
+            if (oldest != null) cursors.Remove(oldest.Path);
+        }
+        cursors[path] = new Cursor(path, Math.Max(0, info.Length - RecoveryTailBytes), state.Apply)
+        {
+            Initializing = true,
+            LastActivity = timestamp,
+            LastWriteUtc = DateTime.MinValue,
+            ObservedLength = -1
+        };
+    }
+
+    void EvictCursors(long timestamp)
+    {
+        foreach (var cursor in cursors.Values.Where(x => timestamp - x.LastActivity > CursorIdleMs).ToArray()) cursors.Remove(cursor.Path);
+        while (cursors.Count > MaxCursors)
+        {
+            var oldest = cursors.Values.OrderBy(x => x.LastWriteUtc).First();
+            cursors.Remove(oldest.Path);
         }
     }
 
@@ -215,7 +316,7 @@ public sealed class CodexDesktopWatcher
         catch (UnauthorizedAccessException) { return false; }
     }
 
-    static void ReadAppended(Cursor cursor)
+    static bool ReadAppended(Cursor cursor, int maxBytes)
     {
         try
         {
@@ -224,9 +325,14 @@ public sealed class CodexDesktopWatcher
             stream.Position = cursor.Offset;
             var buffer = new byte[32 * 1024];
             var read = 0;
+            var remaining = maxBytes;
             using var appended = new MemoryStream();
             if (cursor.Pending.Length > 0) appended.Write(cursor.Pending, 0, cursor.Pending.Length);
-            while ((read = stream.Read(buffer, 0, buffer.Length)) > 0) appended.Write(buffer, 0, read);
+            while (remaining > 0 && (read = stream.Read(buffer, 0, Math.Min(buffer.Length, remaining))) > 0)
+            {
+                appended.Write(buffer, 0, read);
+                remaining -= read;
+            }
             cursor.Offset = stream.Position;
             var bytes = appended.ToArray();
             var start = 0;
@@ -243,27 +349,21 @@ public sealed class CodexDesktopWatcher
                 start = i + 1;
             }
             cursor.Pending = bytes[start..];
+            if (cursor.Pending.Length > MaxPendingLineBytes)
+            {
+                cursor.Pending = [];
+                cursor.DiscardUntilNewline = true;
+            }
+            return cursor.Offset >= stream.Length;
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     static void FinishInitialReplay(Cursor cursor)
     {
         cursor.Initializing = false;
-        var start = cursor.Buffered.FindLastIndex(x => x.Event.EventType == "turn.started");
-        if (start < 0)
-        {
-            cursor.Buffered.Clear();
-            return;
-        }
-        var terminal = cursor.Buffered.FindLastIndex(x => x.Event.EventType is "turn.finished" or "turn.failed");
-        if (terminal > start)
-        {
-            cursor.Buffered.Clear();
-            return;
-        }
-        foreach (var item in cursor.Buffered.Skip(start)) cursor.Apply(item.Event);
+        foreach (var item in cursor.Buffered) cursor.Apply(item.Event);
         cursor.Buffered.Clear();
     }
 
@@ -275,8 +375,13 @@ public sealed class CodexDesktopWatcher
         public byte[] Pending { get; set; } = [];
         public bool DiscardUntilNewline { get; set; }
         public bool Initializing { get; set; }
+        public bool MetadataConfirmed { get; set; }
         public bool IsDesktop => Parser.IsDesktop;
         public List<BufferedEvent> Buffered { get; } = [];
+        public long LastActivity { get; set; }
+        public long ObservedLength { get; set; }
+        public DateTime LastWriteUtc { get; set; }
+        public bool RecoveryOverflow { get; set; }
         long ordinal;
 
         readonly Func<StatusEvent, bool> apply;
@@ -306,7 +411,25 @@ public sealed class CodexDesktopWatcher
             foreach (var e in Parser.Parse(line, ordinal))
             {
                 var item = new BufferedEvent(e);
-                if (Initializing) Buffered.Add(item);
+                if (Initializing)
+                {
+                    if (e.EventType == "turn.started")
+                    {
+                        Buffered.Clear();
+                        RecoveryOverflow = false;
+                        Buffered.Add(item);
+                    }
+                    else if (e.EventType is "turn.finished" or "turn.failed")
+                    {
+                        Buffered.Clear();
+                        RecoveryOverflow = false;
+                    }
+                    else if (Buffered.Count > 0 && !RecoveryOverflow)
+                    {
+                        if (Buffered.Count < MaxRecoveryEvents) Buffered.Add(item);
+                        else { Buffered.Clear(); RecoveryOverflow = true; }
+                    }
+                }
                 else apply(e);
             }
         }

@@ -28,13 +28,13 @@ TrafficMonitor Agent Status 是一个 Windows TrafficMonitor 插件，用于在�
 
 ## 已支持的来源
 
-| 来源 | 接入方式 | 当前验证情况 |
-|---|---|---|
-| Codex Desktop | Bridge 增量读取本地会话日志 | 工作、工具调用和本轮完成已实机验证 |
-| Claude Code | 用户级命令 Hook | 基本生命周期已实机验证 |
-| Cursor Agent | 用户级命令 Hook | 工作、工具调用和本轮完成已实机验证 |
-| Codex CLI / TUI | 用户级命令 Hook | 已完成协议映射，仍需更多实机验证 |
-| Gemini CLI | 用户级命令 Hook | 已完成协议映射，仍需实机验证 |
+| 来源 | 接入方式 | 支持级别 | 当前验证情况 |
+|---|---|---|---|
+| Codex Desktop | Bridge 增量读取本地会话日志 | 已验证 | 工作、工具调用、提问和本轮完成已实机验证 |
+| Claude Code | 用户级命令 Hook | 已验证 | 基本生命周期已实机验证 |
+| Cursor Agent | 用户级命令 Hook | 已验证 | 工作、工具调用和本轮完成已实机验证 |
+| Codex CLI / TUI | 用户级命令 Hook | 实验性 | 已完成协议映射和自动测试，仍需实机验证 |
+| Gemini CLI | 用户级命令 Hook | 实验性 | 已完成协议映射和自动测试，仍需实机验证 |
 
 插件只观察状态，不批准、拒绝或修改 Agent 的操作。Cursor 当前没有可被动监听的完整授权解除事件，因此普通工具调用不会显示成“待授权”。
 
@@ -65,6 +65,10 @@ flowchart LR
 ```text
 AgentStatus.dll
 Install-PluginFiles.ps1
+README.md
+LICENSE
+THIRD_PARTY_NOTICES.md
+SHA256SUMS.txt
 AgentStatus/
 ├─ AgentStatusBridge.exe
 ├─ AgentStatusEmit.exe
@@ -140,7 +144,7 @@ Hook 配置说明见 [`docs/适配器安装.md`](docs/适配器安装.md)。
 .\build.ps1 -Toolchain '<toolchain-root>' -SelfContained
 ```
 
-输出位于 `build\x64`，可交付目录位于 `dist\TrafficMonitorAgentStatus-win-x64`。两者均由构建产生，不作为源码提交。具体流程见 [`docs/构建与验证.md`](docs/构建与验证.md)。
+输出位于 `build\x64`；可交付目录、ZIP 和 ZIP 校验文件位于 `dist`，名称包含项目版本和 `win-x64`。这些内容均由构建产生，不作为源码提交。具体流程见 [`docs/构建与验证.md`](docs/构建与验证.md)。
 
 ## 隐私与边界
 
@@ -156,9 +160,9 @@ Hook 配置说明见 [`docs/适配器安装.md`](docs/适配器安装.md)。
 
 - Codex Desktop 依赖未承诺稳定格式的本机会话日志，需要随客户端版本持续验证。
 - 任务栏宽度当前由 TrafficMonitor 依据固定示例文本预留；动态宽度列入后续计划。
-- 等待状态和 Codex Desktop 长期监听仍有稳定性改进计划，详见 [`docs/开发进度.md`](docs/开发进度.md)。
+- Codex Desktop 依赖本地日志格式；监听器使用文件变化通知和低频扫描兜底，并限制恢复窗口、单轮读取量及活动文件数量。
 - 当前仅提供 x64 构建，尚未覆盖 WSL、远程主机和多用户服务场景。
 
 ## 开发状态
 
-项目目前是首个公开版本前的开发状态。已有状态机、来源映射、原生插件 ABI 和集成回放测试；各来源的真实授权/回答流程、干净环境安装和长期运行仍需补充验证。
+当前版本为首个公开候选版本。已有状态机、来源映射、原生插件 ABI、集成回放和三种来源的实机验证；Codex CLI/TUI、Gemini CLI、真实授权解除、发布包干净环境安装及长期运行仍需继续验证。

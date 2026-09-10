@@ -65,10 +65,33 @@ Check(question.Single().EventType == "input.requested", "Codex desktop structure
 var desktopState = new StateStore(() => clock, isolatedSettings);
 foreach (var e in started.Concat(tool).Concat(toolOutput).Concat(completed)) desktopState.Apply(e);
 Check(desktopState.GetSnapshot().Text == "Codex:本轮完成", "Codex desktop display source");
+var watcherRoot = Path.Combine(Path.GetTempPath(), "tmas-codex-watcher-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(watcherRoot);
+var watcherPath = Path.Combine(watcherRoot, "rollout-2026-01-01T00-00-00-12345678-1234-1234-1234-123456789abc.jsonl");
+try
+{
+    var watcherMetadata = """{"type":"session_meta","payload":{"session_id":"recovered-desktop","cwd":"C:\\project\\recovery","originator":"codex_work_desktop","cli_version":"1.2.3"}}""";
+    var watcherStart = """{"timestamp":"2026-01-01T00:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"recovered-turn"}}""";
+    var recoveryPadding = string.Concat(Enumerable.Repeat("{}\n", 180000));
+    File.WriteAllText(watcherPath, watcherMetadata + "\n" + watcherStart + "\n" + recoveryPadding);
+    var watcherState = new StateStore(() => 0, isolatedSettings);
+    var desktopWatcher = new CodexDesktopWatcher(watcherState, isolatedSettings, watcherRoot);
+    desktopWatcher.ScanOnce();
+    Check(watcherState.GetSnapshot().Text == "Codex:工作中", "Codex desktop recovers start beyond old tail window");
+    File.AppendAllText(watcherPath, """{"timestamp":"2026-01-01T00:01:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"recovered-turn"}}""" + "\n");
+    desktopWatcher.ScanOnce();
+    Check(watcherState.GetSnapshot().Text == "Codex:本轮完成", "Codex desktop watcher consumes appended completion");
+    Check(desktopWatcher.TrackedFiles == 1, "Codex desktop watcher tracks active files only once");
+}
+finally
+{
+    if (File.Exists(watcherPath)) File.Delete(watcherPath);
+    if (Directory.Exists(watcherRoot)) Directory.Delete(watcherRoot);
+}
 var settingsPath = Path.Combine(Path.GetTempPath(), "tmas-settings-" + Guid.NewGuid().ToString("N") + ".json");
 var settingsStore = new SettingsStore(settingsPath);
-settingsStore.Save(new AgentStatusSettings { ShowSource = false, CompletionToastMs = 1000, MaxWorkingMs = 60000, CodexPollIntervalMs = 200 });
-Check(!settingsStore.Current.ShowSource && settingsStore.Current.CompletionToastMs == 1000 && settingsStore.Current.CodexPollIntervalMs == 200, "settings save and reload");
+settingsStore.Save(new AgentStatusSettings { ShowSource = false, CompletionToastMs = 1000, MaxWorkingMs = 60000, MaxWaitingMs = 120000, CodexPollIntervalMs = 200 });
+Check(!settingsStore.Current.ShowSource && settingsStore.Current.CompletionToastMs == 1000 && settingsStore.Current.MaxWaitingMs == 120000 && settingsStore.Current.CodexPollIntervalMs == 200, "settings save and reload");
 var configurable = new StateStore(() => clock, settingsStore);
 configurable.Apply(E("turn.started", turn: "settings-turn"));
 Check(configurable.GetSnapshot().Text == "工作中", "source visibility setting");
@@ -76,8 +99,8 @@ clock = 0;
 configurable.Apply(E("turn.finished", turn: "settings-turn"));
 clock = 1001;
 Check(configurable.GetSnapshot().Text == "", "completion duration setting");
-settingsStore.Save(new AgentStatusSettings { CompletionToastMs = 999999, MaxWorkingMs = 1, CodexPollIntervalMs = 99999 });
-Check(settingsStore.Current.CompletionToastMs == 60000 && settingsStore.Current.MaxWorkingMs == 30000 && settingsStore.Current.CodexPollIntervalMs == 3000, "settings bounds");
+settingsStore.Save(new AgentStatusSettings { CompletionToastMs = 999999, MaxWorkingMs = 1, MaxWaitingMs = int.MaxValue, CodexPollIntervalMs = 99999 });
+Check(settingsStore.Current.CompletionToastMs == 60000 && settingsStore.Current.MaxWorkingMs == 30000 && settingsStore.Current.MaxWaitingMs == 86400000 && settingsStore.Current.CodexPollIntervalMs == 3000, "settings bounds");
 settingsStore.Save(settingsStore.Current with
 {
     ShowSource = true,
@@ -91,6 +114,23 @@ Check(filtered.GetSnapshot().Text == "Codex:处理中" && filtered.GetSnapshot()
 var hiddenOnly = new StateStore(settings: settingsStore);
 hiddenOnly.Apply(E("turn.started", "claude-only", turn: "hidden-only") with { Source = "claude-code" });
 Check(hiddenOnly.GetSnapshot().Text == "" && hiddenOnly.GetSnapshot().Sessions.Count == 0, "hidden source is not displayed");
+var waitingSettings = new SettingsStore(Path.Combine(Path.GetTempPath(), "tmas-waiting-" + Guid.NewGuid().ToString("N") + ".json"));
+waitingSettings.Save(new AgentStatusSettings { MaxWaitingMs = 60000, NoticeToastMs = 15000 });
+long waitingClock = 0;
+var waiting = new StateStore(() => waitingClock, waitingSettings);
+waiting.Apply(E("permission.requested", "wait-permission", call: "p1"));
+waitingClock = 59999;
+Check(waiting.GetSnapshot().Text == "Claudecode:待授权", "permission remains before waiting timeout");
+waiting.Apply(E("tool.finished", "wait-permission", call: "other") with { ToolName = "Other" });
+waitingClock = 60001;
+var expiredPermission = waiting.GetSnapshot();
+Check(expiredPermission.Text == "Claudecode:状态未知" && expiredPermission.Sessions.Single().Note.Contains("授权等待超时"), "permission waiting expires as unknown");
+waitingClock = 0;
+var waitingInput = new StateStore(() => waitingClock, waitingSettings);
+waitingInput.Apply(E("input.requested", "wait-input", call: "q1"));
+waitingClock = 60001;
+var expiredInput = waitingInput.GetSnapshot();
+Check(expiredInput.Text == "Claudecode:状态未知" && expiredInput.Sessions.Single().Note.Contains("回答等待超时"), "input waiting expires as unknown");
 JsonElement Raw(string json) => JsonSerializer.Deserialize<JsonElement>(json);
 var aborted = Adapters.Convert("cursor", Raw("""{"hook_event_name":"stop","session_id":"s","status":"aborted"}"""));
 Check(aborted.Count == 1 && aborted[0].EventType == "turn.finished", "aborted stop is not a failure");

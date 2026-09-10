@@ -12,6 +12,7 @@ public sealed record AgentStatusSettings
     // CompletionToastMs by Normalize().
     public int NoticeToastMs { get; init; } = 15000;
     public int MaxWorkingMs { get; init; } = 10 * 60 * 1000;
+    public int MaxWaitingMs { get; init; } = 2 * 60 * 60 * 1000;
     public int CodexPollIntervalMs { get; init; } = 750;
     public Dictionary<string, bool> EnabledSources { get; init; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> DisplayTexts { get; init; } = new(StringComparer.OrdinalIgnoreCase);
@@ -70,6 +71,10 @@ public sealed record AgentStatusSettings
         // A finite lower bound is intentional: silent work must not become an
         // immortal task-bar state when a source loses its stop event.
             MaxWorkingMs = Math.Clamp(MaxWorkingMs, 30 * 1000, 2 * 60 * 60 * 1000),
+            // A lost answer/approval resolution event must not leave the
+            // taskbar occupied forever. Keep the default generous because a
+            // real user may intentionally leave a prompt waiting for hours.
+            MaxWaitingMs = Math.Clamp(MaxWaitingMs, 60 * 1000, 24 * 60 * 60 * 1000),
             CodexPollIntervalMs = Math.Clamp(CodexPollIntervalMs, 200, 3000),
             EnabledSources = enabled,
             DisplayTexts = texts

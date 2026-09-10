@@ -1,38 +1,50 @@
 param(
-  [Parameter(Mandatory = $true)]
-  [string]$Toolchain,
+  [string]$Toolchain = '',
+  [switch]$ReuseNativeBuild,
   [switch]$SelfContained,
   # Assemble dist\ into an installable release. On by default; pass
   # -Package $false to build only.
   [bool]$Package = $true
 )
 $ErrorActionPreference = 'Stop'
-$Toolchain = [IO.Path]::GetFullPath($Toolchain)
-$sdkRoot = Join-Path $Toolchain 'Windows Kits\10'
-$vcRoot = Join-Path $Toolchain 'VC\Tools\MSVC'
-$sdkInclude = Join-Path $sdkRoot 'Include'
-if (!(Test-Path -LiteralPath $vcRoot -PathType Container) -or !(Test-Path -LiteralPath $sdkInclude -PathType Container)) {
-  throw "Toolchain not found at '$Toolchain'. Pass -Toolchain with a directory containing VC\Tools\MSVC and Windows Kits\10."
-}
-$vc = Get-ChildItem -LiteralPath $vcRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
-$sdk = Get-ChildItem -LiteralPath $sdkInclude -Directory | Sort-Object Name -Descending | Select-Object -First 1
-if (!$vc -or !$sdk) { throw 'MSVC or Windows SDK is incomplete.' }
-$currentPath = [Environment]::GetEnvironmentVariable('Path')
-$env:Path = (Join-Path $vc.FullName 'bin\Hostx64\x64') + ';' + $currentPath
-$env:INCLUDE = "$($vc.FullName)\include;$($sdk.FullName)\ucrt;$($sdk.FullName)\shared;$($sdk.FullName)\um"
-$env:LIB = "$($vc.FullName)\lib\x64;$sdkRoot\Lib\$($sdk.Name)\ucrt\x64;$sdkRoot\Lib\$($sdk.Name)\um\x64"
-$env:VSCMD_SKIP_SENDTELEMETRY = '1'
 $out = Join-Path $PSScriptRoot 'build\x64'
 New-Item -ItemType Directory -Path $out -Force | Out-Null
-Push-Location $out
-try {
-  & cl.exe /nologo /std:c++17 /EHsc /MT /O2 /W4 /utf-8 /LD (Join-Path $PSScriptRoot 'plugin\AgentStatus.cpp') /link /OUT:AgentStatus.dll user32.lib advapi32.lib shell32.lib
-  if ($LASTEXITCODE) { throw 'Native plugin build failed.' }
-  & cl.exe /nologo /std:c++17 /EHsc /MT /O2 /W4 /utf-8 (Join-Path $PSScriptRoot 'tests\PluginProbe.cpp') /link /OUT:PluginProbe.exe
-  if ($LASTEXITCODE) { throw 'Native probe build failed.' }
-  & cl.exe /nologo /std:c++17 /EHsc /MT /O2 /W4 /utf-8 (Join-Path $PSScriptRoot 'plugin\AgentStatusEmit.cpp') /link /OUT:AgentStatusEmit.exe /SUBSYSTEM:WINDOWS advapi32.lib shell32.lib
-  if ($LASTEXITCODE) { throw 'Native emitter build failed.' }
-} finally { Pop-Location }
+if ($ReuseNativeBuild) {
+  foreach ($nativeOutput in @('AgentStatus.dll', 'PluginProbe.exe', 'AgentStatusEmit.exe')) {
+    if (!(Test-Path -LiteralPath (Join-Path $out $nativeOutput) -PathType Leaf)) { throw "Reusable native output is missing: $nativeOutput" }
+  }
+  git -C $PSScriptRoot diff --quiet -- plugin tests\PluginProbe.cpp
+  if ($LASTEXITCODE -ne 0) {
+    throw 'Native source has uncommitted changes; refusing to reuse existing binaries.'
+  }
+  Write-Warning 'Reusing existing native binaries. Use only when they were built from the current committed native sources.'
+} else {
+  if ([string]::IsNullOrWhiteSpace($Toolchain)) { throw 'Pass -Toolchain, or use -ReuseNativeBuild when verified current native outputs already exist.' }
+  $Toolchain = [IO.Path]::GetFullPath($Toolchain)
+  $sdkRoot = Join-Path $Toolchain 'Windows Kits\10'
+  $vcRoot = Join-Path $Toolchain 'VC\Tools\MSVC'
+  $sdkInclude = Join-Path $sdkRoot 'Include'
+  if (!(Test-Path -LiteralPath $vcRoot -PathType Container) -or !(Test-Path -LiteralPath $sdkInclude -PathType Container)) {
+    throw "Toolchain not found at '$Toolchain'. Pass -Toolchain with a directory containing VC\Tools\MSVC and Windows Kits\10."
+  }
+  $vc = Get-ChildItem -LiteralPath $vcRoot -Directory | Sort-Object Name -Descending | Select-Object -First 1
+  $sdk = Get-ChildItem -LiteralPath $sdkInclude -Directory | Sort-Object Name -Descending | Select-Object -First 1
+  if (!$vc -or !$sdk) { throw 'MSVC or Windows SDK is incomplete.' }
+  $currentPath = [Environment]::GetEnvironmentVariable('Path')
+  $env:Path = (Join-Path $vc.FullName 'bin\Hostx64\x64') + ';' + $currentPath
+  $env:INCLUDE = "$($vc.FullName)\include;$($sdk.FullName)\ucrt;$($sdk.FullName)\shared;$($sdk.FullName)\um"
+  $env:LIB = "$($vc.FullName)\lib\x64;$sdkRoot\Lib\$($sdk.Name)\ucrt\x64;$sdkRoot\Lib\$($sdk.Name)\um\x64"
+  $env:VSCMD_SKIP_SENDTELEMETRY = '1'
+  Push-Location $out
+  try {
+    & cl.exe /nologo /std:c++17 /EHsc /MT /O2 /W4 /utf-8 /LD (Join-Path $PSScriptRoot 'plugin\AgentStatus.cpp') /link /OUT:AgentStatus.dll user32.lib advapi32.lib shell32.lib
+    if ($LASTEXITCODE) { throw 'Native plugin build failed.' }
+    & cl.exe /nologo /std:c++17 /EHsc /MT /O2 /W4 /utf-8 (Join-Path $PSScriptRoot 'tests\PluginProbe.cpp') /link /OUT:PluginProbe.exe
+    if ($LASTEXITCODE) { throw 'Native probe build failed.' }
+    & cl.exe /nologo /std:c++17 /EHsc /MT /O2 /W4 /utf-8 (Join-Path $PSScriptRoot 'plugin\AgentStatusEmit.cpp') /link /OUT:AgentStatusEmit.exe /SUBSYSTEM:WINDOWS advapi32.lib shell32.lib
+    if ($LASTEXITCODE) { throw 'Native emitter build failed.' }
+  } finally { Pop-Location }
+}
 if ($SelfContained) {
   dotnet publish (Join-Path $PSScriptRoot 'bridge\AgentStatusBridge.csproj') -c Release -r win-x64 --self-contained true -o (Join-Path $out 'AgentStatus') --nologo
 } else {
@@ -44,7 +56,17 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\AgentStatusJsonHook.cm
 Write-Output "Build output: $out"
 
 if ($Package) {
-  $pkg = Join-Path $PSScriptRoot 'dist\TrafficMonitorAgentStatus-win-x64'
+  [xml]$bridgeProject = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'bridge\AgentStatusBridge.csproj')
+  $version = [string]$bridgeProject.Project.PropertyGroup.Version
+  if ([string]::IsNullOrWhiteSpace($version)) { throw 'Bridge project version is missing.' }
+  foreach ($versionFile in @('bridge\Transport.cs', 'plugin\AgentStatus.cpp')) {
+    if (!(Select-String -LiteralPath (Join-Path $PSScriptRoot $versionFile) -SimpleMatch ('"' + $version + '"') -Quiet)) {
+      throw "Version $version is not synchronized in $versionFile."
+    }
+  }
+  $packageName = "TrafficMonitorAgentStatus-v$version-win-x64"
+  $pkg = Join-Path $PSScriptRoot (Join-Path 'dist' $packageName)
+  if (Test-Path -LiteralPath $pkg) { throw "Release directory already exists: '$pkg'. Move it aside before rebuilding to avoid stale files." }
   $pkgBridge = Join-Path $pkg 'AgentStatus'
   $pkgDocs = Join-Path $pkg 'docs'
   $pkgImages = Join-Path $pkgDocs 'images'
@@ -82,5 +104,17 @@ if ($Package) {
     if (!(Test-Path -LiteralPath $noticeSource -PathType Leaf)) { throw "Required .NET notice not found: '$noticeSource'." }
     Copy-Item -LiteralPath $noticeSource -Destination (Join-Path $pkgDotnetLicenses $notice) -Force
   }
+  $manifestLines = Get-ChildItem -LiteralPath $pkg -Recurse -File |
+    Sort-Object FullName |
+    ForEach-Object {
+      $relative = $_.FullName.Substring($pkg.Length).TrimStart('\').Replace('\', '/')
+      '{0}  {1}' -f (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant(), $relative
+    }
+  [IO.File]::WriteAllLines((Join-Path $pkg 'SHA256SUMS.txt'), $manifestLines, [Text.UTF8Encoding]::new($false))
+  $zip = Join-Path $PSScriptRoot (Join-Path 'dist' ($packageName + '.zip'))
+  Compress-Archive -LiteralPath $pkg -DestinationPath $zip -CompressionLevel Optimal -Force
+  $zipHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash.ToLowerInvariant()
+  [IO.File]::WriteAllText(($zip + '.sha256'), "$zipHash  $([IO.Path]::GetFileName($zip))`n", [Text.UTF8Encoding]::new($false))
   Write-Output "Package output: $pkg"
+  Write-Output "Release archive: $zip"
 }

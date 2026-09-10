@@ -36,6 +36,7 @@ public sealed class Session
     public Dictionary<string, string> Tools { get; } = [];
     public HashSet<string> FinishedTools { get; } = [];
     public Dictionary<string, string> Requests { get; } = [];
+    public Dictionary<string, long> RequestTimes { get; } = [];
     // PermissionRequest does not carry tool_use_id. Keep the tool name so the
     // following PreToolUse/PostToolUse event can close the pending request.
     public Dictionary<string, string> RequestTools { get; } = [];
@@ -107,6 +108,7 @@ public sealed class StateStore
     {
         s.Requests.Remove(key);
         s.RequestTools.Remove(key);
+        s.RequestTimes.Remove(key);
     }
 
     static void ResolvePermissionForTool(Session s, string stream, string toolName)
@@ -153,7 +155,7 @@ public sealed class StateStore
             {
                 if (s.Turn != null && s.Turn != e.TurnId) { s.OldTurns.Add(s.Turn); if (s.OldTurns.Count > MaxEntries) s.OldTurns.Remove(s.OldTurns.First()); }
                 s.Turn = e.TurnId;
-                s.Tools.Clear(); s.FinishedTools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.ResolvedRequests.Clear();
+                s.Tools.Clear(); s.FinishedTools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.RequestTimes.Clear(); s.ResolvedRequests.Clear();
             }
             else if (e.TurnId != null && s.Turn != null && s.Turn != e.TurnId) return true;
             if (e.ProjectLabel.Length > 0) s.Project = Clean(e.ProjectLabel);
@@ -180,6 +182,7 @@ public sealed class StateStore
                     {
                         s.Requests[req] = e.EventType == "input.requested" ? "input" : "permission";
                         s.RequestTools[req] = Clean(e.ToolName, 160);
+                        s.RequestTimes[req] = now();
                     }
                     break;
                 case "input.resolved": case "permission.resolved":
@@ -188,15 +191,15 @@ public sealed class StateStore
                     if (s.ResolvedRequests.Count < MaxEntries) s.ResolvedRequests.Add(req);
                     break;
                 case "turn.finished":
-                    if (e.AgentId == null) { s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "turn"; s.TerminalAt = now(); }
+                    if (e.AgentId == null) { s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.RequestTimes.Clear(); s.Terminal = "turn"; s.TerminalAt = now(); }
                     break;
                 case "task.completed":
                     s.LastNotice = e.IsMainGoal ? "主目标完成" : "子任务完成";
-                    if (e.IsMainGoal && e.AgentId == null) { s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "goal"; s.TerminalAt = now(); }
+                    if (e.IsMainGoal && e.AgentId == null) { s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.RequestTimes.Clear(); s.Terminal = "goal"; s.TerminalAt = now(); }
                     break;
-                case "turn.failed": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "error"; s.TerminalAt = now(); break;
-                case "session.ended": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "ended"; s.TerminalAt = now(); break;
-                case "session.unknown": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "unknown"; s.TerminalAt = now(); break;
+                case "turn.failed": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.RequestTimes.Clear(); s.Terminal = "error"; s.TerminalAt = now(); break;
+                case "session.ended": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.RequestTimes.Clear(); s.Terminal = "ended"; s.TerminalAt = now(); break;
+                case "session.unknown": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.RequestTimes.Clear(); s.Terminal = "unknown"; s.TerminalAt = now(); break;
             }
             accepted++;
             string counter = Clean(e.Source, 64) + ":" + Clean(e.RawEventName.Length > 0 ? e.RawEventName : e.EventType, 64);
@@ -210,7 +213,7 @@ public sealed class StateStore
         lock (gate)
         {
             if (!sessions.TryGetValue(key, out var s)) return false;
-            s.Requests.Clear(); s.RequestTools.Clear(); s.Working = false; s.Tools.Clear(); s.Terminal = "unknown"; s.TerminalAt = now();
+            s.Requests.Clear(); s.RequestTools.Clear(); s.RequestTimes.Clear(); s.Working = false; s.Tools.Clear(); s.Terminal = "unknown"; s.TerminalAt = now();
             s.LastNotice = "用户清除了提醒，执行状态尚未确认";
             return true;
         }
@@ -224,9 +227,24 @@ public sealed class StateStore
             var config = settings.Current;
             foreach (var s in sessions.Values)
             {
-                // Waiting for a user is intentionally unbounded. Only a silent
-                // working state expires, so a missing Stop cannot stay visible forever.
-                if (s.Working && s.Requests.Count == 0 && timestamp - s.LastSeen > config.MaxWorkingMs)
+                var expiredRequests = s.RequestTimes
+                    .Where(x => timestamp - x.Value > config.MaxWaitingMs)
+                    .Select(x => x.Key)
+                    .ToArray();
+                if (expiredRequests.Length > 0)
+                {
+                    var wasPermission = expiredRequests.Any(key => s.Requests.GetValueOrDefault(key) == "permission");
+                    foreach (var key in expiredRequests) RemoveRequest(s, key);
+                    if (s.Requests.Count == 0)
+                    {
+                        s.Working = false;
+                        s.Tools.Clear();
+                        s.Terminal = "unknown";
+                        s.TerminalAt = timestamp;
+                        s.LastNotice = wasPermission ? "授权等待超时，状态已清除" : "回答等待超时，状态已清除";
+                    }
+                }
+                else if (s.Working && timestamp - s.LastSeen > config.MaxWorkingMs)
                 {
                     s.Working = false;
                     s.Tools.Clear();
