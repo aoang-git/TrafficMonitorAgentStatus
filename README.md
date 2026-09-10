@@ -134,6 +134,10 @@ Hook 配置说明见 [`docs/适配器安装.md`](docs/适配器安装.md)。
 
 该状态显示不是安全边界：同一 Windows 用户下的其他进程理论上可以发送伪造状态。插件不能代替 Agent 自身的授权界面。
 
+## 许可证
+
+项目原创代码采用 [MIT License](LICENSE)，版权所有 © 2026 aoang-git。`plugin/PluginInterface.h` 及自包含发布包中的第三方组件适用各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
 ## 当前限制
 
 - Codex Desktop 依赖未承诺稳定格式的本机会话日志，需要随客户端版本持续验证。

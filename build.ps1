@@ -47,8 +47,10 @@ if ($Package) {
   $pkg = Join-Path $PSScriptRoot 'dist\TrafficMonitorAgentStatus-win-x64'
   $pkgBridge = Join-Path $pkg 'AgentStatus'
   $pkgDocs = Join-Path $pkg 'docs'
+  $pkgDotnetLicenses = Join-Path $pkg 'licenses\dotnet'
   New-Item -ItemType Directory -Path $pkgBridge -Force | Out-Null
   New-Item -ItemType Directory -Path $pkgDocs -Force | Out-Null
+  New-Item -ItemType Directory -Path $pkgDotnetLicenses -Force | Out-Null
   # Ship the bridge self-contained: end users must not need a .NET install.
   dotnet publish (Join-Path $PSScriptRoot 'bridge\AgentStatusBridge.csproj') -c Release -r win-x64 --self-contained true -o $pkgBridge --nologo
   if ($LASTEXITCODE) { throw 'Package bridge publish failed.' }
@@ -63,9 +65,17 @@ if ($Package) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\Configure-ClaudeHook.ps1') -Destination (Join-Path $pkgBridge 'Configure-ClaudeHook.ps1') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'tools\Install-PluginFiles.ps1') -Destination (Join-Path $pkg 'Install-PluginFiles.ps1') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $pkg 'README.md') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'LICENSE') -Destination (Join-Path $pkg 'LICENSE') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'THIRD_PARTY_NOTICES.md') -Destination (Join-Path $pkg 'THIRD_PARTY_NOTICES.md') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\项目架构与安装方案.md') -Destination (Join-Path $pkgDocs '项目架构与安装方案.md') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\适配器安装.md') -Destination (Join-Path $pkgDocs '适配器安装.md') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\构建与验证.md') -Destination (Join-Path $pkgDocs '构建与验证.md') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\开发进度.md') -Destination (Join-Path $pkgDocs '开发进度.md') -Force
+  $dotnetRoot = Split-Path -Parent (Get-Command 'dotnet.exe' -ErrorAction Stop).Source
+  foreach ($notice in @('LICENSE.txt', 'ThirdPartyNotices.txt')) {
+    $noticeSource = Join-Path $dotnetRoot $notice
+    if (!(Test-Path -LiteralPath $noticeSource -PathType Leaf)) { throw "Required .NET notice not found: '$noticeSource'." }
+    Copy-Item -LiteralPath $noticeSource -Destination (Join-Path $pkgDotnetLicenses $notice) -Force
+  }
   Write-Output "Package output: $pkg"
 }
