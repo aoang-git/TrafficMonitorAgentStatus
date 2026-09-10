@@ -10,7 +10,35 @@ TrafficMonitor Agent Status 是一个 Windows TrafficMonitor 插件，用于在�
 
 等待授权、等待回答、调用工具和工作中的显示优先级依次降低；同一优先级优先显示最近更新的会话。点击任务栏项目可查看会话详情和调整来源、文案及超时设置。
 
-<!-- 运行效果截图由项目维护者补充到这里。 -->
+## 运行效果
+
+### 任务栏状态
+
+**工作中**
+
+![Codex 工作中状态](docs/images/工作中.png)
+
+**调用工具**
+
+![Codex 调用工具状态](docs/images/调用工具.png)
+
+**待回答**
+
+![Codex 待回答状态](docs/images/待回答.png)
+
+**本轮完成**
+
+![Codex 本轮完成状态](docs/images/本轮完成.png)
+
+### 配置界面
+
+**插件配置页面**
+
+![TrafficMonitor 插件配置页面](docs/images/插件配置页面.png)
+
+**自定义来源和状态文案**
+
+![自定义配置文本](docs/images/自定义配置文本.png)
 
 ## 已支持的来源
 

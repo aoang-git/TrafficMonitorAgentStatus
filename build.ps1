@@ -47,9 +47,11 @@ if ($Package) {
   $pkg = Join-Path $PSScriptRoot 'dist\TrafficMonitorAgentStatus-win-x64'
   $pkgBridge = Join-Path $pkg 'AgentStatus'
   $pkgDocs = Join-Path $pkg 'docs'
+  $pkgImages = Join-Path $pkgDocs 'images'
   $pkgDotnetLicenses = Join-Path $pkg 'licenses\dotnet'
   New-Item -ItemType Directory -Path $pkgBridge -Force | Out-Null
   New-Item -ItemType Directory -Path $pkgDocs -Force | Out-Null
+  New-Item -ItemType Directory -Path $pkgImages -Force | Out-Null
   New-Item -ItemType Directory -Path $pkgDotnetLicenses -Force | Out-Null
   # Ship the bridge self-contained: end users must not need a .NET install.
   dotnet publish (Join-Path $PSScriptRoot 'bridge\AgentStatusBridge.csproj') -c Release -r win-x64 --self-contained true -o $pkgBridge --nologo
@@ -71,6 +73,9 @@ if ($Package) {
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\适配器安装.md') -Destination (Join-Path $pkgDocs '适配器安装.md') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\构建与验证.md') -Destination (Join-Path $pkgDocs '构建与验证.md') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\开发进度.md') -Destination (Join-Path $pkgDocs '开发进度.md') -Force
+  Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'docs\images') -File | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $pkgImages $_.Name) -Force
+  }
   $dotnetRoot = Split-Path -Parent (Get-Command 'dotnet.exe' -ErrorAction Stop).Source
   foreach ($notice in @('LICENSE.txt', 'ThirdPartyNotices.txt')) {
     $noticeSource = Join-Path $dotnetRoot $notice
