@@ -3,6 +3,8 @@ bin/
 obj/
 [Bb]in/
 [Oo]bj/
+/build/
+/dist/
 
 # .NET / C# build artifacts
 *.user
@@ -28,6 +30,7 @@ obj/
 .vs/
 .vscode/
 .idea/
+.claude/
 *.swp
 
 # OS

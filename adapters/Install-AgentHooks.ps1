@@ -73,7 +73,7 @@ function Write-JsonObject([string]$Path, $Value) {
     # UTF-8 without a BOM. Set-Content -Encoding UTF8 emits a BOM under Windows
     # PowerShell 5.1, and the JSON readers used by Codex, Gemini and Cursor
     # reject a leading U+FEFF by discarding the entire settings file. Matches
-    # the deliberate no-BOM write in packaging/Configure-Claude.ps1.
+    # the deliberate no-BOM write in adapters/Configure-ClaudeHook.ps1.
     $json = $Value | ConvertTo-Json -Depth 100
     [IO.File]::WriteAllText($temporary, $json, [Text.UTF8Encoding]::new($false))
     Move-Item -LiteralPath $temporary -Destination $Path -Force

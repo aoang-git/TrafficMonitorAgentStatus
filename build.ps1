@@ -1,11 +1,13 @@
 param(
-  [string]$Toolchain = (Join-Path $PSScriptRoot '..\msvc'),
+  [Parameter(Mandatory = $true)]
+  [string]$Toolchain,
   [switch]$SelfContained,
-  # Assemble packaging\ into an installable release. On by default; pass
+  # Assemble dist\ into an installable release. On by default; pass
   # -Package $false to build only.
   [bool]$Package = $true
 )
 $ErrorActionPreference = 'Stop'
+$Toolchain = [IO.Path]::GetFullPath($Toolchain)
 $sdkRoot = Join-Path $Toolchain 'Windows Kits\10'
 $vcRoot = Join-Path $Toolchain 'VC\Tools\MSVC'
 $sdkInclude = Join-Path $sdkRoot 'Include'
@@ -42,9 +44,11 @@ Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\AgentStatusJsonHook.cm
 Write-Output "Build output: $out"
 
 if ($Package) {
-  $pkg = Join-Path $PSScriptRoot 'packaging'
+  $pkg = Join-Path $PSScriptRoot 'dist\TrafficMonitorAgentStatus-win-x64'
   $pkgBridge = Join-Path $pkg 'AgentStatus'
+  $pkgDocs = Join-Path $pkg 'docs'
   New-Item -ItemType Directory -Path $pkgBridge -Force | Out-Null
+  New-Item -ItemType Directory -Path $pkgDocs -Force | Out-Null
   # Ship the bridge self-contained: end users must not need a .NET install.
   dotnet publish (Join-Path $PSScriptRoot 'bridge\AgentStatusBridge.csproj') -c Release -r win-x64 --self-contained true -o $pkgBridge --nologo
   if ($LASTEXITCODE) { throw 'Package bridge publish failed.' }
@@ -56,5 +60,12 @@ if ($Package) {
   # unreachable for anyone installing from the package.
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\AgentStatusJsonHook.cmd') -Destination (Join-Path $pkgBridge 'AgentStatusJsonHook.cmd') -Force
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\Install-AgentHooks.ps1') -Destination (Join-Path $pkgBridge 'Install-AgentHooks.ps1') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\Configure-ClaudeHook.ps1') -Destination (Join-Path $pkgBridge 'Configure-ClaudeHook.ps1') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'tools\Install-PluginFiles.ps1') -Destination (Join-Path $pkg 'Install-PluginFiles.ps1') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.md') -Destination (Join-Path $pkg 'README.md') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\项目架构与安装方案.md') -Destination (Join-Path $pkgDocs '项目架构与安装方案.md') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\适配器安装.md') -Destination (Join-Path $pkgDocs '适配器安装.md') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\构建与验证.md') -Destination (Join-Path $pkgDocs '构建与验证.md') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'docs\开发进度.md') -Destination (Join-Path $pkgDocs '开发进度.md') -Force
   Write-Output "Package output: $pkg"
 }
