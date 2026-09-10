@@ -5,7 +5,12 @@ int passed = 0;
 void Check(bool b, string name) { if (!b) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
 StatusEvent E(string type, string session = "A", string? call = null, string? turn = null) => new() { Source = "claude-code", SessionId = session, EventType = type, ToolCallId = call, ToolName = "Shell", TurnId = turn };
 long clock = 0;
-var s = new StateStore(() => clock);
+// Tests must not read the developer's live configuration under
+// %LOCALAPPDATA%\TrafficMonitorAgentStatus: StateStore() would otherwise pick
+// up real user settings (custom display texts, disabled sources) and the
+// expected strings below would depend on the machine.
+var isolatedSettings = new SettingsStore(Path.Combine(Path.GetTempPath(), "tmas-test-" + Guid.NewGuid().ToString("N") + ".json"));
+var s = new StateStore(() => clock, isolatedSettings);
 s.Apply(E("session.started")); Check(s.GetSnapshot().Text == "", "idle is hidden");
 s.Apply(E("turn.started", turn: "t1")); Check(s.GetSnapshot().Text == "Claudecode:工作中", "source and state are displayed");
 s.Apply(E("tool.started", call: "1")); s.Apply(E("tool.started", call: "2"));
@@ -35,7 +40,7 @@ var key = s.GetSnapshot().Sessions.Single(v => v.SessionId == "A").Key;
 s.Acknowledge(key); Check(s.GetSnapshot().Text == "Claudecode:状态未知", "acknowledge does not forge execution resume");
 Check(!s.Apply(E("invented")), "unknown event rejected");
 Check(!s.Apply(E("turn.started") with { SchemaVersion = 2 }), "unknown protocol rejected");
-var separate = new StateStore();
+var separate = new StateStore(() => clock, isolatedSettings);
 separate.Apply(E("turn.started") with { Source = "one", InstanceId = "x" });
 separate.Apply(E("turn.started") with { Source = "two", InstanceId = "x" });
 Check(separate.GetSnapshot().Sessions.Count == 2, "source sessions isolated");
@@ -56,7 +61,7 @@ Check(started.Single().EventType == "turn.started" && tool.Single().EventType ==
 var permission = desktop.Parse("""{"timestamp":"2026-01-01T00:00:04Z","ordinal":5,"type":"response_item","payload":{"type":"custom_tool_call","id":"item-2","call_id":"call-2","name":"exec","input":"require_escalated"}}""", 5);
 var question = desktop.Parse("""{"timestamp":"2026-01-01T00:00:05Z","ordinal":6,"type":"response_item","payload":{"type":"custom_tool_call","id":"item-3","call_id":"call-3","name":"request_user_input","input":"{}"}}""", 6);
 Check(permission.Single().EventType == "permission.requested" && question.Single().EventType == "input.requested", "Codex desktop approval and input mapping");
-var desktopState = new StateStore();
+var desktopState = new StateStore(() => clock, isolatedSettings);
 foreach (var e in started.Concat(tool).Concat(toolOutput).Concat(completed)) desktopState.Apply(e);
 Check(desktopState.GetSnapshot().Text == "Codex:本轮完成", "Codex desktop display source");
 var settingsPath = Path.Combine(Path.GetTempPath(), "tmas-settings-" + Guid.NewGuid().ToString("N") + ".json");
@@ -85,4 +90,44 @@ Check(filtered.GetSnapshot().Text == "Codex:处理中" && filtered.GetSnapshot()
 var hiddenOnly = new StateStore(settings: settingsStore);
 hiddenOnly.Apply(E("turn.started", "claude-only", turn: "hidden-only") with { Source = "claude-code" });
 Check(hiddenOnly.GetSnapshot().Text == "" && hiddenOnly.GetSnapshot().Sessions.Count == 0, "hidden source is not displayed");
+JsonElement Raw(string json) => JsonSerializer.Deserialize<JsonElement>(json);
+var aborted = Adapters.Convert("cursor", Raw("""{"hook_event_name":"stop","session_id":"s","status":"aborted"}"""));
+Check(aborted.Count == 1 && aborted[0].EventType == "turn.finished", "aborted stop is not a failure");
+var interrupted = Adapters.Convert("claude-code", Raw("""{"hook_event_name":"Interrupt","session_id":"s"}"""));
+Check(interrupted.Count == 1 && interrupted[0].EventType == "turn.finished", "interrupt is not a failure");
+var errored = Adapters.Convert("cursor", Raw("""{"hook_event_name":"stop","session_id":"s","status":"error"}"""));
+Check(errored.Count == 1 && errored[0].EventType == "turn.failed", "error stop is a failure");
+var stopFailure = Adapters.Convert("claude-code", Raw("""{"hook_event_name":"StopFailure","session_id":"s"}"""));
+Check(stopFailure.Count == 1 && stopFailure[0].EventType == "turn.failed", "StopFailure is a failure");
+Check(Adapters.Convert("gemini-cli", Raw("""{"hook_event_name":"BeforeTool","tool_name":"Shell"}""")).Count == 0, "payload without session id is dropped");
+var geminiStart = Adapters.Convert("gemini-cli", Raw("""{"hook_event_name":"BeforeTool","session_id":"g","tool_name":"Shell","tool_use_id":"t1"}"""));
+var geminiEnd = Adapters.Convert("gemini-cli", Raw("""{"hook_event_name":"AfterTool","session_id":"g","tool_name":"Shell","tool_use_id":"t1"}"""));
+Check(geminiStart.Single().EventType == "tool.started" && geminiEnd.Single().EventType == "tool.finished", "Gemini tool lifecycle");
+var cursorStart = Adapters.Convert("cursor", Raw("""{"hook_event_name":"preToolUse","session_id":"c","tool_name":"Shell","tool_use_id":"t1"}"""));
+var cursorEnd = Adapters.Convert("cursor", Raw("""{"hook_event_name":"postToolUse","session_id":"c","tool_name":"Shell","tool_use_id":"t1"}"""));
+Check(cursorStart.Single().EventType == "tool.started" && cursorEnd.Single().EventType == "tool.finished", "Cursor tool lifecycle");
+
+var noticeSettings = new SettingsStore(Path.Combine(Path.GetTempPath(), "tmas-notice-" + Guid.NewGuid().ToString("N") + ".json"));
+noticeSettings.Save(new AgentStatusSettings());
+Check(noticeSettings.Current.NoticeToastMs > noticeSettings.Current.CompletionToastMs, "notice outlives the completion toast");
+long noticeClock = 0;
+var notices = new StateStore(() => noticeClock, noticeSettings);
+notices.Apply(E("turn.started", "N", turn: "t1"));
+notices.Apply(E("turn.failed", "N"));
+Check(notices.GetSnapshot().Text == "Claudecode:异常", "failure is shown as a notice");
+noticeClock = noticeSettings.Current.NoticeToastMs - 1;
+Check(notices.GetSnapshot().Text == "Claudecode:异常", "failure notice is still shown before it expires");
+noticeClock = noticeSettings.Current.NoticeToastMs + 1;
+Check(notices.GetSnapshot().Text == "", "failure notice expires");
+var busy = new StateStore(() => noticeClock, noticeSettings);
+busy.Apply(E("turn.failed", "failing"));
+busy.Apply(E("turn.started", "busy", turn: "t1") with { Source = "cursor" });
+Check(busy.GetSnapshot().Text == "Cursor:工作中", "a working session outranks an error notice");
+long ackClock = 0;
+var acknowledged = new StateStore(() => ackClock, noticeSettings);
+acknowledged.Apply(E("permission.requested", "P", call: "p1"));
+acknowledged.Acknowledge(acknowledged.GetSnapshot().Sessions.Single(v => v.SessionId == "P").Key);
+Check(acknowledged.GetSnapshot().Text == "Claudecode:状态未知", "acknowledge shows unknown briefly");
+ackClock = noticeSettings.Current.NoticeToastMs + 1;
+Check(acknowledged.GetSnapshot().Text == "", "acknowledged unknown expires");
 Console.WriteLine($"TOTAL {passed} passed");

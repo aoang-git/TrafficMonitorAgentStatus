@@ -44,7 +44,10 @@ public sealed class Session
     public string Terminal { get; set; } = "idle";
     public string LastNotice { get; set; } = "";
     public long LastSeen { get; set; }
-    public long CompletedAt { get; set; } = -1;
+    // Monotonic timestamp of the last terminal transition (completion, failure,
+    // session end, timeout). -1 means "no terminal state recorded yet"; it is
+    // reset to -1 whenever the session goes back to work.
+    public long TerminalAt { get; set; } = -1;
     public DateTimeOffset UpdatedAt { get; set; }
     public Dictionary<string, long> Sequences { get; } = [];
     public string DisplayState => Requests.Values.Contains("permission") ? "待授权" : Requests.Values.Contains("input") ? "待回答" : Terminal == "error" ? "异常" : Tools.Count > 0 ? "调用工具" : Working ? "工作中" : Terminal switch { "turn" => "本轮完成", "goal" => "任务完成", "ended" => "会话结束", "unknown" => "状态未知", _ => "空闲" };
@@ -81,12 +84,24 @@ public sealed class StateStore
     {
         "claude-code" => "Claudecode",
         "codex-desktop" => "Codex",
+        "codex-cli" => "CodexCLI",
         "cursor" => "Cursor",
         "gemini-cli" => "Gemini",
         _ => source
     };
 
-    static bool IsActive(string state) => state is "待授权" or "待回答" or "异常" or "调用工具" or "工作中" or "状态未知";
+    // States that may hold the taskbar display while the user is still expected
+    // to act, or while work is genuinely in flight. "异常" and "状态未知" are
+    // deliberately excluded: they are notices, not activity, so they must not
+    // outrank a session that is still working.
+    static bool IsActive(string state) => state is "待授权" or "待回答" or "调用工具" or "工作中";
+
+    // Terminal states that are shown briefly once nothing is working.
+    static bool IsNotice(string state) => state is "异常" or "状态未知" or "任务完成" or "本轮完成";
+
+    // Notices that signal a problem rather than a normal finish; these use the
+    // longer NoticeToastMs window.
+    static bool IsAlert(string state) => state is "异常" or "状态未知";
 
     static void RemoveRequest(Session s, string key)
     {
@@ -148,11 +163,11 @@ public sealed class StateStore
             switch (e.EventType)
             {
                 case "session.started": break;
-                case "turn.started": case "execution.resumed": s.Working = true; s.Terminal = "idle"; s.CompletedAt = -1; break;
+                case "turn.started": case "execution.resumed": s.Working = true; s.Terminal = "idle"; s.TerminalAt = -1; break;
                 case "tool.started":
                     ResolvePermissionForTool(s, stream, e.ToolName);
                     if (!s.FinishedTools.Contains(call) && s.Tools.Count < MaxEntries) s.Tools[call] = Clean(e.ToolName);
-                    s.Working = true; s.Terminal = "idle"; s.CompletedAt = -1; break;
+                    s.Working = true; s.Terminal = "idle"; s.TerminalAt = -1; break;
                 case "tool.finished": case "tool.failed":
                     s.Tools.Remove(call);
                     if (s.FinishedTools.Count < MaxEntries) s.FinishedTools.Add(call);
@@ -173,15 +188,15 @@ public sealed class StateStore
                     if (s.ResolvedRequests.Count < MaxEntries) s.ResolvedRequests.Add(req);
                     break;
                 case "turn.finished":
-                    if (e.AgentId == null) { s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "turn"; s.CompletedAt = now(); }
+                    if (e.AgentId == null) { s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "turn"; s.TerminalAt = now(); }
                     break;
                 case "task.completed":
                     s.LastNotice = e.IsMainGoal ? "主目标完成" : "子任务完成";
-                    if (e.IsMainGoal && e.AgentId == null) { s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "goal"; s.CompletedAt = now(); }
+                    if (e.IsMainGoal && e.AgentId == null) { s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "goal"; s.TerminalAt = now(); }
                     break;
-                case "turn.failed": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "error"; break;
-                case "session.ended": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "ended"; break;
-                case "session.unknown": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "unknown"; break;
+                case "turn.failed": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "error"; s.TerminalAt = now(); break;
+                case "session.ended": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "ended"; s.TerminalAt = now(); break;
+                case "session.unknown": s.Working = false; s.Tools.Clear(); s.Requests.Clear(); s.RequestTools.Clear(); s.Terminal = "unknown"; s.TerminalAt = now(); break;
             }
             accepted++;
             string counter = Clean(e.Source, 64) + ":" + Clean(e.RawEventName.Length > 0 ? e.RawEventName : e.EventType, 64);
@@ -195,7 +210,7 @@ public sealed class StateStore
         lock (gate)
         {
             if (!sessions.TryGetValue(key, out var s)) return false;
-            s.Requests.Clear(); s.RequestTools.Clear(); s.Working = false; s.Tools.Clear(); s.Terminal = "unknown";
+            s.Requests.Clear(); s.RequestTools.Clear(); s.Working = false; s.Tools.Clear(); s.Terminal = "unknown"; s.TerminalAt = now();
             s.LastNotice = "用户清除了提醒，执行状态尚未确认";
             return true;
         }
@@ -216,6 +231,7 @@ public sealed class StateStore
                     s.Working = false;
                     s.Tools.Clear();
                     s.Terminal = "unknown";
+                    s.TerminalAt = timestamp;
                     s.LastNotice = "工作状态超时，等待新的 Hook";
                 }
             }
@@ -225,13 +241,18 @@ public sealed class StateStore
                 .ThenByDescending(s => s.LastSeen)
                 .Select(s => new SessionView(s.Key, s.Source, s.Project, s.SessionId, s.DisplayState, s.Tools.Count, s.Requests.Values.Count(v => v == "permission"), s.Requests.Values.Count(v => v == "input"), s.UpdatedAt, s.LastNotice))
                 .ToList();
-            int Priority(SessionView x) => x.State switch { "待授权" => 0, "待回答" => 1, "异常" => 2, "调用工具" => 3, "工作中" => 4, "状态未知" => 5, "任务完成" => 6, "本轮完成" => 7, _ => 99 };
+            int Priority(SessionView x) => x.State switch { "待授权" => 0, "待回答" => 1, "调用工具" => 2, "工作中" => 3, _ => 99 };
             var visible = views.Where(x => IsActive(x.State)).OrderBy(Priority).ThenByDescending(x => x.UpdatedAt).FirstOrDefault();
             if (visible == null)
             {
-                visible = views.Where(x => x.State is "任务完成" or "本轮完成")
-                    .Where(x => sessions[x.Key].CompletedAt >= 0 && timestamp - sessions[x.Key].CompletedAt < config.CompletionToastMs)
-                    .OrderByDescending(x => x.UpdatedAt)
+                // Nothing is in flight, so fall back to a time-boxed notice.
+                // Failure and unknown states get the longer notice window; both
+                // expire, so neither can occupy the taskbar forever.
+                visible = views.Where(x => IsNotice(x.State))
+                    .Where(x => sessions[x.Key].TerminalAt >= 0)
+                    .Where(x => timestamp - sessions[x.Key].TerminalAt < (IsAlert(x.State) ? config.NoticeToastMs : config.CompletionToastMs))
+                    .OrderBy(x => x.State switch { "异常" => 0, "状态未知" => 1, "任务完成" => 2, "本轮完成" => 3, _ => 9 })
+                    .ThenByDescending(x => x.UpdatedAt)
                     .FirstOrDefault();
             }
             string text = visible == null ? "" : FormatText(visible, config.ShowSource, config);

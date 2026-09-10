@@ -9,6 +9,7 @@ public sealed class DetailsForm : Form
     readonly FlowLayoutPanel settingsPanel = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(0, 70), Padding = new Padding(8, 5, 8, 5), WrapContents = true, AutoScroll = false };
     readonly CheckBox showSource = new() { Text = "显示来源", AutoSize = true, Margin = new Padding(4, 7, 10, 3) };
     readonly NumericUpDown completionSeconds = new() { Minimum = 0, Maximum = 60, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
+    readonly NumericUpDown noticeSeconds = new() { Minimum = 1, Maximum = 600, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
     readonly NumericUpDown maxWorkingMinutes = new() { Minimum = 1, Maximum = 120, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
     readonly NumericUpDown pollIntervalMs = new() { Minimum = 200, Maximum = 3000, Increment = 50, Width = 100, Margin = new Padding(2, 3, 10, 3) };
     readonly Label settingsStatus = new() { AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(4, 8, 4, 3) };
@@ -26,6 +27,8 @@ public sealed class DetailsForm : Form
         settingsPanel.Controls.Add(showSource);
         settingsPanel.Controls.Add(new Label { Text = "完成提示（秒）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
         settingsPanel.Controls.Add(completionSeconds);
+        settingsPanel.Controls.Add(new Label { Text = "未知/异常提示（秒）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
+        settingsPanel.Controls.Add(noticeSeconds);
         settingsPanel.Controls.Add(new Label { Text = "工作超时（分钟）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
         settingsPanel.Controls.Add(maxWorkingMinutes);
         settingsPanel.Controls.Add(new Label { Text = "扫描间隔（毫秒）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
@@ -85,6 +88,7 @@ public sealed class DetailsForm : Form
         var config = settings.Current;
         showSource.Checked = config.ShowSource;
         completionSeconds.Value = config.CompletionToastMs / 1000;
+        noticeSeconds.Value = Math.Clamp(config.NoticeToastMs / 1000, noticeSeconds.Minimum, noticeSeconds.Maximum);
         maxWorkingMinutes.Value = Math.Max(1, config.MaxWorkingMs / 60000);
         pollIntervalMs.Value = config.CodexPollIntervalMs;
     }
@@ -98,9 +102,13 @@ public sealed class DetailsForm : Form
             {
                 ShowSource = showSource.Checked,
                 CompletionToastMs = (int)completionSeconds.Value * 1000,
+                NoticeToastMs = (int)noticeSeconds.Value * 1000,
                 MaxWorkingMs = (int)maxWorkingMinutes.Value * 60000,
                 CodexPollIntervalMs = (int)pollIntervalMs.Value
             });
+            // Re-read so the controls show the normalized values: NoticeToastMs
+            // is always raised above the completion toast.
+            LoadSettingsIntoControls();
             settingsStatus.Text = "已保存";
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

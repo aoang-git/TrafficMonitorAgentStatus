@@ -134,7 +134,11 @@ public sealed class Server
                 await Wire.Write(pipe, result, deadline.Token);
             }
             catch (OperationCanceledException) { }
-            catch (Exception e) when (e is IOException or JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException) { Diagnostics.Write("request", e.GetType().Name); }
+            // InvalidDataException derives from SystemException, not IOException,
+            // so it must be listed explicitly. A single malformed delivery must
+            // never terminate a pooled worker: eight of them would silently
+            // shrink the pool to nothing and freeze the tray.
+            catch (Exception e) when (e is IOException or JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException or InvalidDataException or NotSupportedException) { Diagnostics.Write("request", e.GetType().Name); }
         }
     }
 }

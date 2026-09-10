@@ -1,4 +1,10 @@
-param([string]$Toolchain = (Join-Path $PSScriptRoot '..\msvc'), [switch]$SelfContained)
+param(
+  [string]$Toolchain = (Join-Path $PSScriptRoot '..\msvc'),
+  [switch]$SelfContained,
+  # Assemble packaging\ into an installable release. On by default; pass
+  # -Package $false to build only.
+  [bool]$Package = $true
+)
 $ErrorActionPreference = 'Stop'
 $sdkRoot = Join-Path $Toolchain 'Windows Kits\10'
 $vcRoot = Join-Path $Toolchain 'VC\Tools\MSVC'
@@ -31,5 +37,24 @@ if ($SelfContained) {
   dotnet publish (Join-Path $PSScriptRoot 'bridge\AgentStatusBridge.csproj') -c Release --self-contained false -o (Join-Path $out 'AgentStatus') --nologo
 }
 if ($LASTEXITCODE) { throw 'Bridge build failed.' }
-Copy-Item -LiteralPath (Join-Path $out 'AgentStatusEmit.exe') -Destination (Join-Path $out 'AgentStatus\AgentStatusEmit.exe')
+Copy-Item -LiteralPath (Join-Path $out 'AgentStatusEmit.exe') -Destination (Join-Path $out 'AgentStatus\AgentStatusEmit.exe') -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\AgentStatusJsonHook.cmd') -Destination (Join-Path $out 'AgentStatus\AgentStatusJsonHook.cmd') -Force
 Write-Output "Build output: $out"
+
+if ($Package) {
+  $pkg = Join-Path $PSScriptRoot 'packaging'
+  $pkgBridge = Join-Path $pkg 'AgentStatus'
+  New-Item -ItemType Directory -Path $pkgBridge -Force | Out-Null
+  # Ship the bridge self-contained: end users must not need a .NET install.
+  dotnet publish (Join-Path $PSScriptRoot 'bridge\AgentStatusBridge.csproj') -c Release -r win-x64 --self-contained true -o $pkgBridge --nologo
+  if ($LASTEXITCODE) { throw 'Package bridge publish failed.' }
+  Copy-Item -LiteralPath (Join-Path $out 'AgentStatus.dll') -Destination (Join-Path $pkg 'AgentStatus.dll') -Force
+  Copy-Item -LiteralPath (Join-Path $out 'AgentStatusEmit.exe') -Destination (Join-Path $pkgBridge 'AgentStatusEmit.exe') -Force
+  # The JSON wrapper and the adapter installer must travel with the package:
+  # Install-AgentHooks.ps1 refuses to run when AgentStatusJsonHook.cmd is not
+  # beside it, so leaving these out made Codex CLI / Gemini / Cursor
+  # unreachable for anyone installing from the package.
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\AgentStatusJsonHook.cmd') -Destination (Join-Path $pkgBridge 'AgentStatusJsonHook.cmd') -Force
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'adapters\Install-AgentHooks.ps1') -Destination (Join-Path $pkgBridge 'Install-AgentHooks.ps1') -Force
+  Write-Output "Package output: $pkg"
+}

@@ -6,6 +6,11 @@ public sealed record AgentStatusSettings
 {
     public bool ShowSource { get; init; } = true;
     public int CompletionToastMs { get; init; } = 5000;
+    // How long an unknown or failed state stays on the taskbar. Deliberately
+    // longer than the completion toast so it is noticed, but bounded so it can
+    // never occupy the display permanently. Always kept strictly above
+    // CompletionToastMs by Normalize().
+    public int NoticeToastMs { get; init; } = 15000;
     public int MaxWorkingMs { get; init; } = 10 * 60 * 1000;
     public int CodexPollIntervalMs { get; init; } = 750;
     public Dictionary<string, bool> EnabledSources { get; init; } = new(StringComparer.OrdinalIgnoreCase);
@@ -15,6 +20,7 @@ public sealed record AgentStatusSettings
     [
         ("claude-code", "Claude Code"),
         ("codex-desktop", "Codex 桌面版"),
+        ("codex-cli", "Codex CLI / TUI"),
         ("cursor", "Cursor"),
         ("gemini-cli", "Gemini CLI"),
         ("generic", "通用来源")
@@ -51,9 +57,16 @@ public sealed record AgentStatusSettings
             foreach (var pair in DisplayTexts)
                 if (!texts.ContainsKey(pair.Key)) texts[pair.Key] = CleanText(pair.Value, pair.Key);
 
+        var completionMs = Math.Clamp(CompletionToastMs, 0, 60 * 1000);
+        // An unknown/error notice outlives the completion toast so it is
+        // actually noticed, and the 10-minute ceiling keeps a bad config from
+        // parking a stale state on the taskbar indefinitely.
+        var noticeMs = Math.Clamp(NoticeToastMs, completionMs + 1000, 10 * 60 * 1000);
+
         return this with
         {
-            CompletionToastMs = Math.Clamp(CompletionToastMs, 0, 60 * 1000),
+            CompletionToastMs = completionMs,
+            NoticeToastMs = noticeMs,
         // A finite lower bound is intentional: silent work must not become an
         // immortal task-bar state when a source loses its stop event.
             MaxWorkingMs = Math.Clamp(MaxWorkingMs, 30 * 1000, 2 * 60 * 60 * 1000),

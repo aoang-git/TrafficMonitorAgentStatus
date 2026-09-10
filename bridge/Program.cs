@@ -31,7 +31,7 @@ internal static class Program
                 Console.WriteLine(Wire.Request(new { op = command }).GetAwaiter().GetResult().GetRawText()); return 0;
             }
             if (command == "start") { EnsureStarted().GetAwaiter().GetResult(); return 0; }
-            Console.WriteLine("AgentStatusBridge: serve | start | details | emit --source claude-code [--event NAME] | snapshot | ping");
+            Console.WriteLine("AgentStatusBridge: serve | start | details | emit --source SOURCE [--event NAME] | snapshot | ping");
             return 1;
         }
         catch (Exception e)
