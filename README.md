@@ -14,21 +14,7 @@ TrafficMonitor Agent Status 是一个 Windows TrafficMonitor 插件，用于在�
 
 ### 任务栏状态
 
-**工作中**
-
-![Codex 工作中状态](docs/images/工作中.png)
-
-**调用工具**
-
-![Codex 调用工具状态](docs/images/调用工具.png)
-
-**待回答**
-
-![Codex 待回答状态](docs/images/待回答.png)
-
-**本轮完成**
-
-![Codex 本轮完成状态](docs/images/本轮完成.png)
+![任务栏状态显示：工作中、调用工具、待回答和本轮完成](docs/images/任务栏状态显示拼图.png)
 
 ### 配置界面
 
