@@ -127,7 +127,7 @@ if ($null -eq $cursor.PSObject.Properties['version']) {
 }
 $cursorHooks = Get-OrAddObject $cursor 'hooks'
 foreach ($eventName in @('sessionStart','sessionEnd','beforeSubmitPrompt','preToolUse','postToolUse','postToolUseFailure','stop')) {
-    $handler = [pscustomobject]@{ type = 'command'; command = "$emitCommand --source cursor" }
+    $handler = [pscustomobject]@{ type = 'command'; command = "$emitCommand --source cursor"; timeout = 3 }
     Set-HookEvent $cursorHooks $eventName $handler 'cursor'
 }
 Write-JsonObject $cursorPath $cursor

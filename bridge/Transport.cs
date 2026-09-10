@@ -113,7 +113,7 @@ public sealed class Server
                 object result;
                 switch (op)
                 {
-                    case "ping": result = new { ok = true, version = "0.1.0", pid = Environment.ProcessId }; break;
+                    case "ping": result = new { ok = true, version = "0.1.2", pid = Environment.ProcessId }; break;
                     case "snapshot": result = state.GetSnapshot(); break;
                     case "ack": result = new { ok = state.Acknowledge(root.GetProperty("key").GetString() ?? "") }; break;
                     case "emit":
@@ -125,9 +125,14 @@ public sealed class Server
                     case "hook":
                         string source = root.GetProperty("source").GetString() ?? "";
                         string? eventOverride = root.TryGetProperty("event_override", out var ev) ? ev.GetString() : null;
-                        var mapped = Adapters.Convert(source, root.GetProperty("raw"), string.IsNullOrEmpty(eventOverride) ? null : eventOverride);
+                        var hookRaw = root.GetProperty("raw");
+                        var mapped = Adapters.Convert(source, hookRaw, string.IsNullOrEmpty(eventOverride) ? null : eventOverride);
                         bool hookOk = true;
                         foreach (var e in mapped) hookOk &= state.Apply(e);
+                        var rawName = string.IsNullOrEmpty(eventOverride) && hookRaw.ValueKind == JsonValueKind.Object && hookRaw.TryGetProperty("hook_event_name", out var hookName) && hookName.ValueKind == JsonValueKind.String
+                            ? hookName.GetString() ?? "unknown"
+                            : eventOverride ?? "unknown";
+                        Diagnostics.Write("hook", $"{SafeTag(source)}:{SafeTag(rawName)} mapped={mapped.Count} ok={hookOk}");
                         result = new { ok = hookOk }; break;
                     default: result = new { ok = false, error = "unknown_operation" }; break;
                 }
@@ -138,9 +143,11 @@ public sealed class Server
             // so it must be listed explicitly. A single malformed delivery must
             // never terminate a pooled worker: eight of them would silently
             // shrink the pool to nothing and freeze the tray.
-            catch (Exception e) when (e is IOException or JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException or InvalidDataException or NotSupportedException) { Diagnostics.Write("request", e.GetType().Name); }
+            catch (Exception e) { Diagnostics.Write("request", e.GetType().Name); }
         }
     }
+
+    static string SafeTag(string value) => new(value.Where(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.').Take(64).ToArray());
 }
 
 public static class Diagnostics

@@ -7,7 +7,7 @@
   "targets": {
     ".NETCoreApp,Version=v10.0": {},
     ".NETCoreApp,Version=v10.0/win-x64": {
-      "AgentStatusBridge/0.1.0": {
+      "AgentStatusBridge/0.1.2": {
         "dependencies": {
           "runtimepack.Microsoft.NETCore.App.Runtime.win-x64": "10.0.11",
           "runtimepack.Microsoft.WindowsDesktop.App.Runtime.win-x64": "10.0.11"
@@ -870,7 +870,7 @@
     }
   },
   "libraries": {
-    "AgentStatusBridge/0.1.0": {
+    "AgentStatusBridge/0.1.2": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

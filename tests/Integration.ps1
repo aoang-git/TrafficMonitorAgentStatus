@@ -24,6 +24,22 @@ function Run-Bridge([string[]]$Arguments, [string]$InputText='') {
   return $outTask.GetAwaiter().GetResult()
 }
 Run-Bridge @('start') | Out-Null
+$bomSession = 'cursor-bom-' + [Guid]::NewGuid().ToString('N')
+$bomJson = @{conversation_id=$bomSession;session_id=$bomSession;generation_id='bom-turn';hook_event_name='beforeSubmitPrompt';cursor_version='integration';prompt='中文'} | ConvertTo-Json -Compress
+$bomBytes = [Text.UTF8Encoding]::new($true).GetPreamble() + [Text.UTF8Encoding]::new($false).GetBytes($bomJson)
+$bomInfo = [Diagnostics.ProcessStartInfo]::new((Join-Path (Split-Path $bridge) 'AgentStatusEmit.exe'))
+foreach ($arg in @('--source','cursor','--strict')) { $bomInfo.ArgumentList.Add($arg) }
+$bomInfo.UseShellExecute=$false; $bomInfo.CreateNoWindow=$true
+$bomInfo.RedirectStandardInput=$true; $bomInfo.RedirectStandardOutput=$true; $bomInfo.RedirectStandardError=$true
+$bomProcess = [Diagnostics.Process]::Start($bomInfo)
+$bomProcess.StandardInput.BaseStream.Write($bomBytes, 0, $bomBytes.Length)
+$bomProcess.StandardInput.BaseStream.Close()
+$bomOutput = $bomProcess.StandardOutput.ReadToEnd()
+if (!$bomProcess.WaitForExit(5000)) { throw 'BOM emitter test exceeded deadline' }
+if ($bomProcess.ExitCode -ne 0 -or $bomOutput.Trim() -ne '{}') { throw 'UTF-8 BOM hook delivery failed' }
+$bomSnapshot = Run-Bridge @('snapshot') | ConvertFrom-Json
+if (@($bomSnapshot.sessions | Where-Object session_id -eq $bomSession)[0].state -ne '工作中') { throw 'UTF-8 BOM event was not accepted' }
+Run-Bridge @('emit','--source','cursor','--strict') (@{conversation_id=$bomSession;session_id=$bomSession;generation_id='bom-turn';hook_event_name='stop';cursor_version='integration';status='completed'} | ConvertTo-Json -Compress) | Out-Null
 $session = 'integration-' + [Guid]::NewGuid().ToString('N')
 $samples = [Collections.Generic.List[double]]::new()
 function Emit([string]$Type, [string]$Call='') {
