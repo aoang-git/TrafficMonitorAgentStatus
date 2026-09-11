@@ -165,6 +165,8 @@ public sealed class CodexDesktopWatcher
     const int MaxReadBytesPerScan = 1024 * 1024;
     const int MaxPendingLineBytes = 64 * 1024;
     const int MaxCursors = 256;
+    const int MaxDiscoveryFiles = 32;
+    const int MaxFilesPerScan = 4;
     const int MaxRecoveryEvents = 4096;
     const long DiscoveryIntervalMs = 60 * 1000;
     const long CursorIdleMs = 24 * 60 * 60 * 1000;
@@ -187,6 +189,9 @@ public sealed class CodexDesktopWatcher
 
     public async Task Run(CancellationToken ct)
     {
+        // Let Server.Run create its pipe workers and snapshot timer before the
+        // first bounded recovery scan performs synchronous file I/O.
+        await Task.Yield();
         try
         {
             while (!ct.IsCancellationRequested)
@@ -236,19 +241,22 @@ public sealed class CodexDesktopWatcher
         foreach (var path in dirty.Keys.ToArray())
             if (dirty.TryRemove(path, out _)) EnsureCursor(path, timestamp);
 
+        var processed = 0;
         foreach (var pair in cursors.ToArray())
         {
             var cursor = pair.Value;
             var info = new FileInfo(cursor.Path);
             if (!info.Exists) { cursors.Remove(pair.Key); continue; }
             if (cursor.Offset >= info.Length && info.Length == cursor.ObservedLength && info.LastWriteTimeUtc == cursor.LastWriteUtc) continue;
+            if (processed >= MaxFilesPerScan) continue;
+            processed++;
             cursor.ObservedLength = info.Length;
             cursor.LastWriteUtc = info.LastWriteTimeUtc;
             cursor.LastActivity = timestamp;
             if (!cursor.MetadataConfirmed) cursor.MetadataConfirmed = ReadFirstMetadata(cursor);
             if (!cursor.IsDesktop) continue;
             if (!cursor.Initializing && cursor.Offset == 0 && info.Length > 0) cursor.Initializing = true;
-            var caughtUp = ReadAppended(cursor, cursor.Initializing ? RecoveryTailBytes : MaxReadBytesPerScan);
+            var caughtUp = ReadAppended(cursor, MaxReadBytesPerScan);
             if (cursor.Initializing && caughtUp) FinishInitialReplay(cursor);
         }
         EvictCursors(timestamp);
@@ -261,7 +269,7 @@ public sealed class CodexDesktopWatcher
             .Select(path => new FileInfo(path))
             .Where(info => info.Exists && info.LastWriteTimeUtc >= cutoff)
             .OrderByDescending(info => info.LastWriteTimeUtc)
-            .Take(MaxCursors)
+            .Take(MaxDiscoveryFiles)
             .ToArray();
         var timestamp = Environment.TickCount64;
         foreach (var info in recent) EnsureCursor(info.FullName, timestamp);
