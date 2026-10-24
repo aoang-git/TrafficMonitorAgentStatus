@@ -7,7 +7,7 @@ public sealed class DisplaySettingsForm : Form
     readonly Dictionary<string, TextBox> textBoxes = new(StringComparer.OrdinalIgnoreCase);
     readonly Label status = new() { AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(8, 9, 4, 4) };
 
-    public DisplaySettingsForm(SettingsStore settings)
+    public DisplaySettingsForm(SettingsStore settings, IEnumerable<string>? observedSources = null)
     {
         this.settings = settings;
         Text = "显示来源与状态文本";
@@ -21,14 +21,17 @@ public sealed class DisplaySettingsForm : Form
         var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, ColumnCount = 1, RowCount = 3, Padding = new Padding(4) };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
+        var sourceDefinitions = AgentStatusSettings.SourceDefinitions.Concat((observedSources ?? []).Concat(settings.Current.EnabledSources.Keys)
+            .Except(AgentStatusSettings.SourceDefinitions.Select(s => s.Id), StringComparer.OrdinalIgnoreCase)
+            .Distinct(StringComparer.OrdinalIgnoreCase).Select(id => (Id: id, Label: StateStore.DisplaySource(id)))).ToArray();
         var sources = new GroupBox { Text = "显示哪些工具", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
-        var sourceTable = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = (AgentStatusSettings.SourceDefinitions.Count + 1) / 2 };
+        var sourceTable = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = (sourceDefinitions.Length + 1) / 2 };
         sourceTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         sourceTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        for (var i = 0; i < AgentStatusSettings.SourceDefinitions.Count; i++)
+        for (var i = 0; i < sourceDefinitions.Length; i++)
         {
             if (i % 2 == 0) sourceTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            var definition = AgentStatusSettings.SourceDefinitions[i];
+            var definition = sourceDefinitions[i];
             var check = new CheckBox { Text = definition.Label, AutoSize = true, Margin = new Padding(4, 5, 12, 5), Tag = definition.Id };
             sourceBoxes[definition.Id] = check;
             sourceTable.Controls.Add(check, i % 2, i / 2);
@@ -71,8 +74,7 @@ public sealed class DisplaySettingsForm : Form
 
     void LoadValues(AgentStatusSettings config, string message)
     {
-        foreach (var definition in AgentStatusSettings.SourceDefinitions)
-            sourceBoxes[definition.Id].Checked = config.EnabledSources.GetValueOrDefault(definition.Id, true);
+        foreach (var pair in sourceBoxes) pair.Value.Checked = config.EnabledSources.GetValueOrDefault(pair.Key, true);
         foreach (var definition in AgentStatusSettings.DisplayDefinitions)
             textBoxes[definition.Key].Text = config.DisplayTexts.GetValueOrDefault(definition.Key, definition.DefaultText);
         status.Text = message;
@@ -84,7 +86,7 @@ public sealed class DisplaySettingsForm : Form
         {
             var current = settings.Current;
             var enabled = new Dictionary<string, bool>(current.EnabledSources, StringComparer.OrdinalIgnoreCase);
-            foreach (var definition in AgentStatusSettings.SourceDefinitions) enabled[definition.Id] = sourceBoxes[definition.Id].Checked;
+            foreach (var pair in sourceBoxes) enabled[pair.Key] = pair.Value.Checked;
             var texts = new Dictionary<string, string>(current.DisplayTexts, StringComparer.OrdinalIgnoreCase);
             foreach (var definition in AgentStatusSettings.DisplayDefinitions) texts[definition.Key] = textBoxes[definition.Key].Text;
             settings.Save(current with { EnabledSources = enabled, DisplayTexts = texts });

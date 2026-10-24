@@ -1,174 +1,119 @@
 using AgentStatus;
+using System.Text;
 using System.Text.Json;
+using System.Diagnostics;
 
 int passed = 0;
-void Check(bool b, string name) { if (!b) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
-StatusEvent E(string type, string session = "A", string? call = null, string? turn = null) => new() { Source = "claude-code", SessionId = session, EventType = type, ToolCallId = call, ToolName = "Shell", TurnId = turn };
-long clock = 0;
-// Tests must not read the developer's live configuration under
-// %LOCALAPPDATA%\TrafficMonitorAgentStatus: StateStore() would otherwise pick
-// up real user settings (custom display texts, disabled sources) and the
-// expected strings below would depend on the machine.
-var isolatedSettings = new SettingsStore(Path.Combine(Path.GetTempPath(), "tmas-test-" + Guid.NewGuid().ToString("N") + ".json"));
-var s = new StateStore(() => clock, isolatedSettings);
-s.Apply(E("session.started")); Check(s.GetSnapshot().Text == "", "idle is hidden");
-s.Apply(E("turn.started", turn: "t1")); Check(s.GetSnapshot().Text == "Claudecode:工作中", "source and state are displayed");
-s.Apply(E("tool.started", call: "1")); s.Apply(E("tool.started", call: "2"));
-Check(s.GetSnapshot().Text == "Claudecode:调用工具", "parallel tools counted");
-s.Apply(E("tool.finished", call: "1")); Check(s.GetSnapshot().Text == "Claudecode:调用工具", "finishing one does not end other");
-s.Apply(E("permission.requested", call: "2")); s.Apply(E("turn.started", "B"));
-Check(s.GetSnapshot().Text == "Claudecode:待授权", "other session cannot overwrite permission");
-s.Apply(E("permission.resolved", call: "2")); Check(!s.GetSnapshot().Text.Contains("待授权"), "permission can resolve");
-var duplicate = E("tool.started", call: "3"); s.Apply(duplicate); s.Apply(duplicate);
-Check(s.GetSnapshot().Sessions.Single(v => v.SessionId == "A").Tools == 2, "retry does not double count");
-s.Apply(E("input.requested", call: "ask")); Check(s.GetSnapshot().Text == "Claudecode:待回答", "structured question prioritised");
-s.Apply(E("input.resolved", call: "ask")); Check(!s.GetSnapshot().Text.Contains("待回答"), "answer clears request");
-s.Apply(E("input.requested", call: "ask")); Check(!s.GetSnapshot().Text.Contains("待回答"), "late request does not resurrect resolved question");
-s.Apply(E("turn.finished") with { AgentId = "child" }); Check(s.GetSnapshot().Sessions.Single(v => v.SessionId == "A").Tools == 2, "child completion preserves parent");
-s.Apply(E("task.completed") with { TaskId = "subtask" }); Check(s.GetSnapshot().Sessions.Single(v => v.SessionId == "A").State == "调用工具", "task event is not assumed main goal");
-s.Apply(E("turn.started", turn: "t2")); s.Apply(E("turn.finished", turn: "t1")); Check(s.GetSnapshot().Sessions.Single(v => v.SessionId == "A").State == "工作中", "late old turn ignored");
-s.Apply(E("tool.finished", call: "late")); s.Apply(E("tool.started", call: "late")); Check(s.GetSnapshot().Sessions.Single(v => v.SessionId == "A").Tools == 0, "late start after finish ignored");
-clock = 86400000; Check(s.GetSnapshot().Sessions.Single(v => v.SessionId == "A").State == "状态未知", "silent work expires as unknown");
-s.Apply(E("session.ended", "B")); s.Apply(E("turn.finished")); Check(s.GetSnapshot().Text == "Claudecode:本轮完成", "turn completion displayed");
-Check(s.GetSnapshot().Text == "Claudecode:本轮完成", "completion includes source");
-clock += 5001; Check(s.GetSnapshot().Text == "", "completion toast expires");
-s.Apply(E("permission.requested") with { ToolName = "Bash" });
-Check(s.GetSnapshot().Text == "Claudecode:待授权", "permission request is visible");
-s.Apply(E("tool.started", call: "approved") with { ToolName = "Bash" });
-Check(!s.GetSnapshot().Text.Contains("待授权"), "permission clears when approved tool starts");
-var key = s.GetSnapshot().Sessions.Single(v => v.SessionId == "A").Key;
-s.Acknowledge(key); Check(s.GetSnapshot().Text == "Claudecode:状态未知", "acknowledge does not forge execution resume");
-Check(!s.Apply(E("invented")), "unknown event rejected");
-Check(!s.Apply(E("turn.started") with { SchemaVersion = 2 }), "unknown protocol rejected");
-var separate = new StateStore(() => clock, isolatedSettings);
-separate.Apply(E("turn.started") with { Source = "one", InstanceId = "x" });
-separate.Apply(E("turn.started") with { Source = "two", InstanceId = "x" });
-Check(separate.GetSnapshot().Sessions.Count == 2, "source sessions isolated");
-var raw = JsonSerializer.Deserialize<JsonElement>("""{"hook_event_name":"PreToolUse","session_id":"s","tool_name":"AskUserQuestion","tool_use_id":"q","cwd":"C:\\project"}""");
-var mapped = Adapters.Convert("claude-code", raw);
-Check(mapped.Count == 2 && mapped[1].EventType == "input.requested", "Claude AskUserQuestion mapping");
-var stop = Adapters.Convert("claude-code", JsonSerializer.Deserialize<JsonElement>("""{"hook_event_name":"Stop","session_id":"s","last_assistant_message":"Are you sure?"}"""));
-Check(stop.Count == 1 && stop[0].EventType == "turn.finished", "question mark is not fabricated hook");
-var desktopPath = Path.Combine(Path.GetTempPath(), "rollout-2026-01-01T00-00-00-12345678-1234-1234-1234-123456789abc.jsonl");
-var desktop = new CodexDesktopParser(desktopPath);
-desktop.ReadMetadata("""{"type":"session_meta","payload":{"session_id":"desktop-session","cwd":"C:\\project\\demo","originator":"codex_work_desktop","cli_version":"1.2.3"}}""");
-Check(desktop.IsDesktop && desktop.SessionId == "desktop-session" && desktop.ProjectLabel == "demo", "Codex desktop metadata");
-var started = desktop.Parse("""{"timestamp":"2026-01-01T00:00:00Z","ordinal":1,"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}""", 1);
-var tool = desktop.Parse("""{"timestamp":"2026-01-01T00:00:01Z","ordinal":2,"type":"response_item","payload":{"type":"custom_tool_call","id":"item-1","call_id":"call-1","name":"exec","input":"{\"cmd\":\"dir\"}"}}""", 2);
-var toolOutput = desktop.Parse("""{"timestamp":"2026-01-01T00:00:02Z","ordinal":3,"type":"response_item","payload":{"type":"custom_tool_call_output","id":"item-1","call_id":"call-1","output":"ok"}}""", 3);
-var completed = desktop.Parse("""{"timestamp":"2026-01-01T00:00:03Z","ordinal":4,"type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}""", 4);
-Check(started.Single().EventType == "turn.started" && tool.Single().EventType == "tool.started" && toolOutput.Single().EventType == "tool.finished" && completed.Single().EventType == "turn.finished", "Codex desktop lifecycle mapping");
-var permissionWords = desktop.Parse("""{"timestamp":"2026-01-01T00:00:04Z","ordinal":5,"type":"response_item","payload":{"type":"custom_tool_call","id":"item-2","call_id":"call-2","name":"exec","input":"{\"sandbox_permissions\":\"use_default\",\"justification\":\"documented field\",\"note\":\"require_escalated\"}"}}""", 5);
-var question = desktop.Parse("""{"timestamp":"2026-01-01T00:00:05Z","ordinal":6,"type":"response_item","payload":{"type":"custom_tool_call","id":"item-3","call_id":"call-3","name":"request_user_input","input":"{}"}}""", 6);
-Check(permissionWords.Single().EventType == "tool.started", "Codex desktop does not infer approval from tool input text");
-Check(question.Single().EventType == "input.requested", "Codex desktop structured input mapping");
-var desktopState = new StateStore(() => clock, isolatedSettings);
-foreach (var e in started.Concat(tool).Concat(toolOutput).Concat(completed)) desktopState.Apply(e);
-Check(desktopState.GetSnapshot().Text == "Codex:本轮完成", "Codex desktop display source");
-var watcherRoot = Path.Combine(Path.GetTempPath(), "tmas-codex-watcher-" + Guid.NewGuid().ToString("N"));
-Directory.CreateDirectory(watcherRoot);
-var watcherPath = Path.Combine(watcherRoot, "rollout-2026-01-01T00-00-00-12345678-1234-1234-1234-123456789abc.jsonl");
+void Check(bool value, string name) { if (!value) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
+void Throws(Action action, string name) { try { action(); } catch (Exception e) when (e is InvalidDataException or IOException or JsonException) { Check(true, name); return; } throw new Exception("FAIL: " + name); }
+string root = Path.Combine(AppContext.BaseDirectory, "tmas-tests-" + Guid.NewGuid().ToString("N"));
+Directory.CreateDirectory(root);
+Environment.SetEnvironmentVariable("TMAS_INSTANCE", "test" + Guid.NewGuid().ToString("N")[..12]);
+Environment.SetEnvironmentVariable("TMAS_DATA_DIR", Path.Combine(root, "bridge"));
+var settings = new SettingsStore();
+settings.Save(AgentStatusSettings.Defaults);
+long clock = 1000, id = 0;
+StateStore NewState() { clock = 1000; var result = new StateStore(() => clock, settings); result.Reset("Runtime 已连接", true); return result; }
+RuntimeFact F(string kind = "input.observed", string agent = "codex", string session = "A", string? operation = "op1", FactData? data = null) => new()
+{ Schema = 3, Id = ++id, Agent = agent, SessionId = session, SessionNamespace = "local", OperationId = operation, SourceId = "src-" + session, Kind = kind, Origin = "file", Data = data ?? new() };
+string Text(StateStore state) => state.GetSnapshot().Text;
 try
 {
-    var watcherMetadata = """{"type":"session_meta","payload":{"session_id":"recovered-desktop","cwd":"C:\\project\\recovery","originator":"codex_work_desktop","cli_version":"1.2.3"}}""";
-    var watcherStart = """{"timestamp":"2026-01-01T00:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"recovered-turn"}}""";
-    var recoveryPadding = string.Concat(Enumerable.Repeat("{}\n", 180000));
-    File.WriteAllText(watcherPath, watcherMetadata + "\n" + watcherStart + "\n" + recoveryPadding);
-    var watcherState = new StateStore(() => 0, isolatedSettings);
-    var desktopWatcher = new CodexDesktopWatcher(watcherState, isolatedSettings, watcherRoot);
-    desktopWatcher.ScanOnce();
-    Check(watcherState.GetSnapshot().Text == "Codex:工作中", "Codex desktop recovers start beyond old tail window");
-    File.AppendAllText(watcherPath, """{"timestamp":"2026-01-01T00:01:00Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"recovered-turn"}}""" + "\n");
-    desktopWatcher.ScanOnce();
-    Check(watcherState.GetSnapshot().Text == "Codex:本轮完成", "Codex desktop watcher consumes appended completion");
-    Check(desktopWatcher.TrackedFiles == 1, "Codex desktop watcher tracks active files only once");
+    var s = NewState();
+    s.Apply(F()); Check(Text(s) == "Codex:工作中", "new input displays work");
+    Check(s.GetSnapshot().Sessions[0].UpdatedAt.Offset == DateTimeOffset.Now.Offset, "detail timestamps use the local timezone");
+    var tool = F("tool.observed", data: new() { CallId = "a", Phase = "requested" }); s.Apply(tool);
+    s.Apply(F("tool.observed", data: new() { CallId = "b", Phase = "requested" }));
+    Check(s.GetSnapshot().Sessions[0].Tools == 2, "parallel tools tracked");
+    Check(!s.Apply(tool), "duplicate revision rejected");
+    s.Apply(F("tool.observed", data: new() { CallId = "a", Phase = "finished" })); Check(Text(s) == "Codex:调用工具", "one tool finishing preserves another");
+    s.Apply(F("approval.observed", data: new() { RequestId = "r", Phase = "requested" }));
+    clock++; s.Apply(F(session: "B")); Check(Text(s) == "Codex:待确认", "confirmation outranks newer work");
+    s.Apply(F("approval.observed", data: new() { RequestId = "r", Phase = "resolved" })); Check(Text(s) == "Codex:调用工具", "confirmation resolution preserves tool");
+    s.Apply(F("tool.observed", data: new() { CallId = "b", Phase = "finished" })); Check(Text(s) == "Codex:工作中", "last tool returns to working");
+    clock++; s.Apply(F(agent: "pi", session: "C")); Check(Text(s) == "Pi:工作中", "newest equal priority wins");
+    s.Apply(F("lifecycle.observed", agent: "pi", session: "C", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "failed" })); Check(Text(s) == "Codex:工作中", "failure does not displace activity");
+    s = NewState(); s.Apply(F(operation: "first")); s.Apply(F(operation: "second"));
+    Check(!s.Apply(F("lifecycle.observed", operation: "first", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "completed" })) && Text(s) == "Codex:工作中", "old operation cannot finish current work");
+    s.Apply(F("lifecycle.observed", operation: "second", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "completed" }));
+    Check(Text(s) == "Codex:本轮完成", "explicit turn completion");
+    Check(!s.Apply(F(operation: "second")), "late activity cannot revive explicit completion");
+    clock += 5001; Check(Text(s) == "", "completion expires");
+    s = NewState(); s.Apply(F("lifecycle.observed", data: new() { Scope = "agent_run", Phase = "ended", Outcome = "completed" })); Check(Text(s) == "Codex:任务完成", "run completion");
+    s = NewState(); s.Apply(F("lifecycle.observed", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "interrupted" })); Check(Text(s) == "Codex:已中断", "interruption result");
+    s = NewState(); s.Apply(F("state.reported", data: new() { State = "failed" }) with { Origin = "external" }); Check(Text(s) == "Codex:异常", "external failure");
+    s = NewState(); s.Apply(F(agent: "claude"));
+    s.Apply(F("message.observed", agent: "claude", data: new() { Role = "assistant", StopReason = "end_turn" }));
+    clock += 2999; Check(Text(s) == "Claude:工作中", "settle delay does not finish early");
+    clock++; Check(Text(s) == "Claude:本轮完成", "normal quiet end shows result without explanation");
+    Check(!s.GetSnapshot().Tooltip.Contains("推断"), "tooltip contains final result only");
+    s.Apply(F("tool.observed", agent: "claude", data: new() { CallId = "later", Phase = "requested" })); Check(Text(s) == "Claude:调用工具", "new evidence after quiet end resumes activity");
+    s = NewState(); s.Apply(F("tool.observed", agent: "pi", data: new() { CallId = "t", Phase = "requested" }));
+    s.Apply(F("message.observed", agent: "pi", data: new() { Role = "assistant", StopReason = "stop" })); clock += 3001;
+    Check(Text(s) == "Pi:调用工具", "pending tools block quiet end");
+    s = NewState(); s.Apply(F(agent: "claude") with { SequenceGap = true });
+    s.Apply(F("message.observed", agent: "claude", data: new() { Role = "assistant", StopReason = "end_turn" })); clock += 3001;
+    Check(Text(s) == "Claude:工作中", "sequence gap prevents quiet success");
+    s = NewState(); s.Apply(F()); clock += 299000;
+    s.Apply(F("state.reported", data: new() { State = "unknown" })); clock += 1001;
+    Check(Text(s) == "Codex:状态未知", "unknown does not renew progress"); clock += 15001; Check(Text(s) == "", "unknown notice expires");
+    s = NewState(); s.Apply(F("approval.observed", data: new() { RequestId = "r", Phase = "requested" })); clock += 300001;
+    Check(Text(s) == "Codex:待确认", "approval has longer timeout"); clock += 1500000;
+    Check(Text(s) == "Codex:状态未知", "approval eventually expires");
+    s = NewState(); s.Apply(F()); clock += 299000; s.Apply(F("source.health", data: new() { Health = "degraded" }));
+    Check(Text(s) == "Codex:状态未知", "degraded source clears active certainty"); clock += 1001; s.GetSnapshot(); clock += 15001; Check(Text(s) == "", "health does not renew activity");
+    s = NewState(); s.Apply(F()); var key = s.GetSnapshot().Sessions[0].Key;
+    Check(s.Acknowledge(key) && Text(s) == "Codex:状态未知", "local clear does not report completion");
+    settings.Save(settings.Current with { EnabledSources = new() { ["codex"] = false } }); Check(Text(s) == "", "source filtering");
+    settings.Save(AgentStatusSettings.Defaults with { ShowSource = false, DisplayTexts = new() { ["working"] = "忙碌" } });
+    s = NewState(); s.Apply(F()); Check(Text(s) == "忙碌", "custom text hot loads"); settings.ResetToDefaults();
+    s.Reset("Runtime 未连接"); Check(Text(s) == "" && s.GetSnapshot().Sessions.Count == 0 && s.GetSnapshot().Tooltip == "Runtime 未连接", "disconnect clears all live state");
+    Check(!s.Apply(F()), "disconnected facts rejected");
+    s = NewState(); Check(!s.Apply(F() with { Historical = true }), "historical facts rejected");
+    var stream = new RuntimeSubscription("epoch", s);
+    Throws(() => stream.Receive(new("epoch:1", "fact", JsonSerializer.Serialize(F(), JsonWire.Options))), "fact before ready rejected");
+    stream.Receive(new("epoch:10", "ready", "{\"schema\":3,\"epoch\":\"epoch\",\"revision\":10}"));
+    var live = F() with { Id = 11 }; stream.Receive(new("epoch:11", "fact", JsonSerializer.Serialize(live, JsonWire.Options)));
+    Check(Text(s) == "Codex:工作中", "ready establishes new subscription boundary");
+    stream.Receive(new("epoch:11", "fact", JsonSerializer.Serialize(live, JsonWire.Options))); Check(s.GetSnapshot().Sessions.Count == 1, "duplicate SSE fact ignored");
+    Throws(() => stream.Receive(new("other:12", "fact", "{}")), "epoch mismatch rejected");
+    Throws(() => stream.Receive(new("epoch:20", "gap", "{\"schema\":3,\"epoch\":\"epoch\",\"revision\":20}")), "gap requests rediscovery");
+    Check(Text(s) == "" && !s.GetSnapshot().Connected, "gap clears activity immediately");
+    var parsed = new List<SseMessage>();
+    await using (var bytes = new MemoryStream(Encoding.UTF8.GetBytes(": heartbeat\r\nevent: ready\r\nid: e:0\r\ndata: {\"schema\":3,\r\ndata: \"revision\":0}\r\n\r\n")))
+        await foreach (var message in SseReader.ReadAsync(bytes, () => { }, default)) parsed.Add(message);
+    Check(parsed.Count == 1 && parsed[0].Data.Contains('\n'), "SSE comments CRLF and multiline frames");
+    await using (var stall = new StallStream())
+    {
+        bool timedOut = false;
+        try { await foreach (var unused in SseReader.ReadAsync(stall, () => { }, default, TimeSpan.FromMilliseconds(30))) { } }
+        catch (TimeoutException) { timedOut = true; }
+        Check(timedOut, "SSE heartbeat timeout enforced");
+    }
+    string discovery = Path.Combine(root, "runtime"); Directory.CreateDirectory(Path.Combine(discovery, "private"));
+    string discoveryFile = Path.Combine(discovery, "private", "connection.json");
+    await File.WriteAllTextAsync(discoveryFile, "{}");
+    bool badDiscovery = false; try { await RuntimeConnection.LoadAsync(discovery, default); } catch (InvalidDataException) { badDiscovery = true; }
+    Check(badDiscovery, "malformed discovery rejected");
+    await File.WriteAllTextAsync(discoveryFile, "{\"url\":\"http://example.com\",\"token\":\"secret\",\"pid\":1,\"epoch\":\"e\"}");
+    badDiscovery = false; try { await RuntimeConnection.LoadAsync(discovery, default); } catch (InvalidDataException) { badDiscovery = true; }
+    Check(badDiscovery, "nonloopback discovery rejected");
+    await RuntimeIntegration.Run(root, Check, args);
+    Console.WriteLine($"PASS: {passed} checks");
 }
 finally
 {
-    if (File.Exists(watcherPath)) File.Delete(watcherPath);
-    if (Directory.Exists(watcherRoot)) Directory.Delete(watcherRoot);
+    Environment.SetEnvironmentVariable("TMAS_DATA_DIR", null); Environment.SetEnvironmentVariable("TMAS_INSTANCE", null);
+    // Only this test's randomly named, resolved temporary directory is removed.
+    if (Path.GetFullPath(root).StartsWith(Path.GetFullPath(AppContext.BaseDirectory), StringComparison.OrdinalIgnoreCase)) Directory.Delete(root, true);
 }
-var settingsPath = Path.Combine(Path.GetTempPath(), "tmas-settings-" + Guid.NewGuid().ToString("N") + ".json");
-var settingsStore = new SettingsStore(settingsPath);
-settingsStore.Save(new AgentStatusSettings { ShowSource = false, CompletionToastMs = 1000, MaxWorkingMs = 60000, MaxWaitingMs = 120000, CodexPollIntervalMs = 200 });
-Check(!settingsStore.Current.ShowSource && settingsStore.Current.CompletionToastMs == 1000 && settingsStore.Current.MaxWaitingMs == 120000 && settingsStore.Current.CodexPollIntervalMs == 200, "settings save and reload");
-var configurable = new StateStore(() => clock, settingsStore);
-configurable.Apply(E("turn.started", turn: "settings-turn"));
-Check(configurable.GetSnapshot().Text == "工作中", "source visibility setting");
-clock = 0;
-configurable.Apply(E("turn.finished", turn: "settings-turn"));
-clock = 1001;
-Check(configurable.GetSnapshot().Text == "", "completion duration setting");
-settingsStore.Save(new AgentStatusSettings { CompletionToastMs = 999999, MaxWorkingMs = 1, MaxWaitingMs = int.MaxValue, CodexPollIntervalMs = 99999 });
-Check(settingsStore.Current.CompletionToastMs == 60000 && settingsStore.Current.MaxWorkingMs == 30000 && settingsStore.Current.MaxWaitingMs == 86400000 && settingsStore.Current.CodexPollIntervalMs == 3000, "settings bounds");
-settingsStore.Save(settingsStore.Current with
-{
-    ShowSource = true,
-    EnabledSources = new Dictionary<string, bool> { ["claude-code"] = false, ["codex-desktop"] = true },
-    DisplayTexts = new Dictionary<string, string> { ["working"] = "处理中" }
-});
-var filtered = new StateStore(settings: settingsStore);
-filtered.Apply(E("turn.started", "claude", turn: "hidden") with { Source = "claude-code" });
-filtered.Apply(E("turn.started", "codex", turn: "shown") with { Source = "codex-desktop" });
-Check(filtered.GetSnapshot().Text == "Codex:处理中" && filtered.GetSnapshot().Sessions.Count == 1, "source filter and custom text");
-var hiddenOnly = new StateStore(settings: settingsStore);
-hiddenOnly.Apply(E("turn.started", "claude-only", turn: "hidden-only") with { Source = "claude-code" });
-Check(hiddenOnly.GetSnapshot().Text == "" && hiddenOnly.GetSnapshot().Sessions.Count == 0, "hidden source is not displayed");
-var waitingSettings = new SettingsStore(Path.Combine(Path.GetTempPath(), "tmas-waiting-" + Guid.NewGuid().ToString("N") + ".json"));
-waitingSettings.Save(new AgentStatusSettings { MaxWaitingMs = 60000, NoticeToastMs = 15000 });
-long waitingClock = 0;
-var waiting = new StateStore(() => waitingClock, waitingSettings);
-waiting.Apply(E("permission.requested", "wait-permission", call: "p1"));
-waitingClock = 59999;
-Check(waiting.GetSnapshot().Text == "Claudecode:待授权", "permission remains before waiting timeout");
-waiting.Apply(E("tool.finished", "wait-permission", call: "other") with { ToolName = "Other" });
-waitingClock = 60001;
-var expiredPermission = waiting.GetSnapshot();
-Check(expiredPermission.Text == "Claudecode:状态未知" && expiredPermission.Sessions.Single().Note.Contains("授权等待超时"), "permission waiting expires as unknown");
-waitingClock = 0;
-var waitingInput = new StateStore(() => waitingClock, waitingSettings);
-waitingInput.Apply(E("input.requested", "wait-input", call: "q1"));
-waitingClock = 60001;
-var expiredInput = waitingInput.GetSnapshot();
-Check(expiredInput.Text == "Claudecode:状态未知" && expiredInput.Sessions.Single().Note.Contains("回答等待超时"), "input waiting expires as unknown");
-JsonElement Raw(string json) => JsonSerializer.Deserialize<JsonElement>(json);
-var aborted = Adapters.Convert("cursor", Raw("""{"hook_event_name":"stop","session_id":"s","status":"aborted"}"""));
-Check(aborted.Count == 1 && aborted[0].EventType == "turn.finished", "aborted stop is not a failure");
-var interrupted = Adapters.Convert("claude-code", Raw("""{"hook_event_name":"Interrupt","session_id":"s"}"""));
-Check(interrupted.Count == 1 && interrupted[0].EventType == "turn.finished", "interrupt is not a failure");
-var errored = Adapters.Convert("cursor", Raw("""{"hook_event_name":"stop","session_id":"s","status":"error"}"""));
-Check(errored.Count == 1 && errored[0].EventType == "turn.failed", "error stop is a failure");
-var stopFailure = Adapters.Convert("claude-code", Raw("""{"hook_event_name":"StopFailure","session_id":"s"}"""));
-Check(stopFailure.Count == 1 && stopFailure[0].EventType == "turn.failed", "StopFailure is a failure");
-Check(Adapters.Convert("gemini-cli", Raw("""{"hook_event_name":"BeforeTool","tool_name":"Shell"}""")).Count == 0, "payload without session id is dropped");
-var geminiStart = Adapters.Convert("gemini-cli", Raw("""{"hook_event_name":"BeforeTool","session_id":"g","tool_name":"Shell","tool_use_id":"t1"}"""));
-var geminiEnd = Adapters.Convert("gemini-cli", Raw("""{"hook_event_name":"AfterTool","session_id":"g","tool_name":"Shell","tool_use_id":"t1"}"""));
-Check(geminiStart.Single().EventType == "tool.started" && geminiEnd.Single().EventType == "tool.finished", "Gemini tool lifecycle");
-var cursorStart = Adapters.Convert("cursor", Raw("""{"hook_event_name":"preToolUse","session_id":"c","tool_name":"Shell","tool_use_id":"t1"}"""));
-var cursorEnd = Adapters.Convert("cursor", Raw("""{"hook_event_name":"postToolUse","session_id":"c","tool_name":"Shell","tool_use_id":"t1"}"""));
-Check(cursorStart.Single().EventType == "tool.started" && cursorEnd.Single().EventType == "tool.finished", "Cursor tool lifecycle");
 
-var noticeSettings = new SettingsStore(Path.Combine(Path.GetTempPath(), "tmas-notice-" + Guid.NewGuid().ToString("N") + ".json"));
-noticeSettings.Save(new AgentStatusSettings());
-Check(noticeSettings.Current.NoticeToastMs > noticeSettings.Current.CompletionToastMs, "notice outlives the completion toast");
-long noticeClock = 0;
-var notices = new StateStore(() => noticeClock, noticeSettings);
-notices.Apply(E("turn.started", "N", turn: "t1"));
-notices.Apply(E("turn.failed", "N"));
-Check(notices.GetSnapshot().Text == "Claudecode:异常", "failure is shown as a notice");
-noticeClock = noticeSettings.Current.NoticeToastMs - 1;
-Check(notices.GetSnapshot().Text == "Claudecode:异常", "failure notice is still shown before it expires");
-noticeClock = noticeSettings.Current.NoticeToastMs + 1;
-Check(notices.GetSnapshot().Text == "", "failure notice expires");
-var busy = new StateStore(() => noticeClock, noticeSettings);
-busy.Apply(E("turn.failed", "failing"));
-busy.Apply(E("turn.started", "busy", turn: "t1") with { Source = "cursor" });
-Check(busy.GetSnapshot().Text == "Cursor:工作中", "a working session outranks an error notice");
-long ackClock = 0;
-var acknowledged = new StateStore(() => ackClock, noticeSettings);
-acknowledged.Apply(E("permission.requested", "P", call: "p1"));
-acknowledged.Acknowledge(acknowledged.GetSnapshot().Sessions.Single(v => v.SessionId == "P").Key);
-Check(acknowledged.GetSnapshot().Text == "Claudecode:状态未知", "acknowledge shows unknown briefly");
-ackClock = noticeSettings.Current.NoticeToastMs + 1;
-Check(acknowledged.GetSnapshot().Text == "", "acknowledged unknown expires");
-Console.WriteLine($"TOTAL {passed} passed");
+sealed class StallStream : Stream
+{
+    public override bool CanRead => true; public override bool CanSeek => false; public override bool CanWrite => false;
+    public override long Length => throw new NotSupportedException(); public override long Position { get => 0; set => throw new NotSupportedException(); }
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default) { await Task.Delay(Timeout.Infinite, ct); return 0; }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override void Flush() { } public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException(); public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+}

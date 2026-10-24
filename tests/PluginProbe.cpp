@@ -21,6 +21,7 @@ int wmain(int argc, wchar_t** argv) {
         auto item = plugin->GetItem(0); if (!item) return 4;
         plugin->DataRequired();
         if (!item->GetItemValueText() || !plugin->GetTooltipInfo()) return 5;
+        if (argc > 3 && std::wstring(item->GetItemValueText()) != argv[3]) return 6;
         if (i == 0) {
             std::wstring text = item->GetItemValueText();
             int bytes = WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, nullptr, 0, nullptr, nullptr);

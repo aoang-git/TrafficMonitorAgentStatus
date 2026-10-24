@@ -1,168 +1,56 @@
 # TrafficMonitor Agent Status
 
-TrafficMonitor Agent Status 是一个 Windows TrafficMonitor 插件，用于在任务栏中显示本机 Agent 工具的当前状态。它把多个 Agent 会话的事件归一化后，显示最需要关注的一项，例如：
+Windows x64 TrafficMonitor 插件，通过本机 [Agent Status Runtime](https://github.com/aoang-git/Agent_Status_Runtime) 显示 Agent 当前状态。版本 0.2.0 使用 Runtime schema 3，完整替换旧 Hook 和日志采集链路。
 
-- `Codex:工作中`
-- `Cursor:调用工具`
-- `Claudecode:待回答`
-- `Claudecode:待授权`
-- `Codex:本轮完成`
+任务栏显示 `Codex:工作中`、`Claude:调用工具`、`DeepSeek:待确认`、`Pi:本轮完成` 等结果。待确认优先于工具、工作；同级显示最近活动会话。点击项目可查看各会话、配置 Runtime 目录、来源和状态文案。
 
-等待授权、等待回答、调用工具和工作中的显示优先级依次降低；同一优先级优先显示最近更新的会话。点击任务栏项目可查看会话详情和调整来源、文案及超时设置。
+## 安装
 
-## 运行效果
+先安装并运行 Runtime 0.3.0 或兼容 schema 3 的版本。默认连接文件位于 `%APPDATA%\AgentStatusRuntime\private\connection.json`，不需要复制令牌或填写端口。
 
-### 任务栏状态
-
-![任务栏状态显示：工作中、调用工具、待回答和本轮完成](docs/images/任务栏状态显示拼图.png)
-
-### 配置界面
-
-**插件配置页面**
-
-![TrafficMonitor 插件配置页面](docs/images/插件配置页面.png)
-
-**自定义来源和状态文案**
-
-![自定义配置文本](docs/images/自定义配置文本.png)
-
-## 已支持的来源
-
-| 来源 | 接入方式 | 支持级别 | 当前验证情况 |
-|---|---|---|---|
-| Codex Desktop | Bridge 增量读取本地会话日志 | 已验证 | 工作、工具调用、提问和本轮完成已实机验证 |
-| Claude Code | 用户级命令 Hook | 已验证 | 基本生命周期已实机验证 |
-| Cursor Agent | 用户级命令 Hook | 已验证 | 工作、工具调用和本轮完成已实机验证 |
-| Codex CLI / TUI | 用户级命令 Hook | 实验性 | 已完成协议映射和自动测试，仍需实机验证 |
-| Gemini CLI | 用户级命令 Hook | 实验性 | 已完成协议映射和自动测试，仍需实机验证 |
-
-插件只观察状态，不批准、拒绝或修改 Agent 的操作。Cursor 当前没有可被动监听的完整授权解除事件，因此普通工具调用不会显示成“待授权”。
-
-## 工作方式
-
-```mermaid
-flowchart LR
-    A[Agent Hook] --> B[AgentStatusEmit.exe]
-    C[Codex Desktop 日志] --> D[日志适配器]
-    B --> E[AgentStatusBridge.exe]
-    D --> E
-    E --> F[多会话状态机]
-    F --> G[共享内存快照]
-    G --> H[AgentStatus.dll]
-    H --> I[TrafficMonitor 任务栏]
-```
-
-详细模块划分见 [`docs/项目架构与安装方案.md`](docs/项目架构与安装方案.md)。
-
-## 交给 Agent 安装
-
-下载并解压发布包，然后把**整个发布目录**和下面这段任务交给能够读取文件、修改配置并执行命令的 Agent。不要只提供 `AgentStatus.dll`，Bridge、事件入口及其 .NET 运行依赖也必须同时交付。
-
-> 阅读此发布包的 README 和项目架构说明。检查本机正在运行的 TrafficMonitor 安装位置、版本和架构，以及实际使用的 Agent 工具。修改前备份相关文件并保留已有 Hook。把 AgentStatus.dll 安装到 TrafficMonitor 的 plugins 目录，把完整 AgentStatus 子目录安装到 plugins\AgentStatus。确保 AgentStatusBridge.exe 由当前普通桌面用户运行并随用户会话启动。只为本机实际使用的 Agent 配置对应 Hook。完成后检查 Bridge 连通性，并实测“工作中 → 调用工具 → 本轮完成”；能够触发询问或授权的工具还要验证等待状态及解除。遇到格式或版本不兼容时，根据实际配置、诊断日志和源码调整；失败则恢复修改前的文件。
-
-发布包应包含：
-
-```text
-AgentStatus.dll
-Install-PluginFiles.ps1
-README.md
-LICENSE
-THIRD_PARTY_NOTICES.md
-SHA256SUMS.txt
-AgentStatus/
-├─ AgentStatusBridge.exe
-├─ AgentStatusEmit.exe
-├─ AgentStatusJsonHook.cmd
-├─ Install-AgentHooks.ps1
-├─ Configure-ClaudeHook.ps1
-├─ AgentStatusBridge.deps.json
-├─ AgentStatusBridge.runtimeconfig.json
-└─ Bridge 自包含运行文件
-```
-
-安装完成后的目标结构是：
-
-```text
-<TrafficMonitor>/
-└─ plugins/
-   ├─ AgentStatus.dll
-   └─ AgentStatus/
-      ├─ AgentStatusBridge.exe
-      ├─ AgentStatusEmit.exe
-      └─ ...
-```
-
-关键约束：
-
-- 当前交付目标是 Windows x64，TrafficMonitor、插件和 Bridge 架构必须一致。
-- 覆盖正在使用的 DLL 前先退出 TrafficMonitor，覆盖 Bridge 文件前先停止旧 Bridge。
-- Bridge 必须由普通桌面用户启动。管理员权限 Bridge 可能使普通权限 Agent 无法连接命名管道。
-- Agent 配置必须先解析并备份，再合并本插件 Hook；不能覆盖其他 Hook 或权限规则。
-- Codex Desktop 依赖 Bridge 主动监听会话日志，因此需要确保 Bridge 随用户会话启动。
-- Hook 调用失败不得阻塞 Agent 的正常工作。
-
-TrafficMonitor 重启后，在任务栏显示项目中启用“Agent 状态”。Agent 工具通常需要重新启动或新建会话才能载入新增 Hook。
-
-## 验证与排错
-
-在普通用户权限的终端中运行已安装的 Bridge：
+解压发布包，在普通用户 PowerShell 7 中执行：
 
 ```powershell
-& '<TrafficMonitor>\plugins\AgentStatus\AgentStatusBridge.exe' ping
-& '<TrafficMonitor>\plugins\AgentStatus\AgentStatusBridge.exe' snapshot
+.\Install-PluginFiles.ps1 -TrafficMonitorDirectory '<TrafficMonitor目录>'
 ```
 
-`ping` 应返回 `ok: true`、版本和 Bridge 进程 ID；`snapshot` 可查看收到的会话、状态和事件计数。然后让对应 Agent 完成一轮包含工具调用的任务，观察任务栏是否依次显示工作、工具和完成状态。
+安装器校验包内 SHA-256，备份旧插件和配置，精确移除 Claude、Cursor、Gemini 中指向旧插件目录的 Hook，替换本插件目录并配置当前用户登录启动 Bridge。备份位于 `%LOCALAPPDATA%\TrafficMonitorAgentStatus\backups`。其他插件、Agent 配置和 Runtime 不受影响。若 TrafficMonitor 已运行，安装器关闭并重新启动它；首次安装请自行启动 TrafficMonitor 并在任务栏项目中启用“Agent 状态”。
 
-诊断文件位于：
+旧配置不迁移，首次切换使用新版默认值；再次安装保留版本 2 的显示配置。自包含发布包无需另装 .NET。
 
-```text
-%LOCALAPPDATA%\TrafficMonitorAgentStatus\diagnostics.log
-```
+## 状态与来源
 
-诊断日志只记录来源、事件名、进程、Windows 用户/会话标识、传输阶段、错误码和耗时，不记录提示内容、工具参数或工具输出。排错时应分别确认：
+- Runtime 内置观察 Codex、Claude、DeepSeek DSH、Pi；其他 Agent 通过 Runtime 标准上报接入，插件会自动识别来源。
+- Cursor、Gemini 旧 Hook 已移除，需要独立 Runtime 上报端才能显示。本插件不安装 Agent Hook，也不读取会话文件。
+- 正常结束显示“本轮完成”，明确整项任务完成显示“任务完成”，中断显示“已中断”，失败显示“异常”。
+- 正常消息在没有待处理工具、确认或证据缺口时，静默 3 秒后结束。普通活动默认 5 分钟、待确认默认 30 分钟无进展后显示“状态未知”。判断依据不作为状态后缀显示。
+- 完成提示默认 5 秒；异常、未知、中断默认 15 秒。活动优先于结束提示，空闲任务栏留空。
+- Runtime 只广播订阅后新活动。启动、断线、服务换代、事件缺口均清空旧任务，重新连接不会恢复历史任务。
 
-1. Agent 是否产生了目标 Hook 或 Codex Desktop 日志事件。
-2. `AgentStatusEmit.exe` 是否被调用。
-3. 事件是否成功到达 Bridge。
-4. `snapshot` 中是否形成了预期状态。
-5. TrafficMonitor 是否加载 DLL 并读取共享内存。
-
-Hook 配置说明见 [`docs/适配器安装.md`](docs/适配器安装.md)。
-
-## 更新和回滚
-
-更新前备份当前 `AgentStatus.dll` 和 `plugins\AgentStatus` 中将被覆盖的同名文件。Hook 命令仍指向相同安装目录时，普通程序更新不需要重复配置 Hook。
-
-新版本异常时，停止 TrafficMonitor 和 Bridge，把同一次备份的文件逐个恢复，再从普通用户会话启动 Bridge。卸载时移除本插件文件、Bridge 启动项，并精确删除指向本插件路径和来源参数的 Hook；保留其他工具配置。
-
-## 从源码构建
-
-需要 .NET 10 SDK、MSVC x64 C++ 工具和 Windows SDK。构建脚本不包含开发者本机路径，调用时明确传入同时包含 `VC\Tools\MSVC` 和 `Windows Kits\10` 的工具链根目录：
+## 诊断
 
 ```powershell
-.\build.ps1 -Toolchain '<toolchain-root>' -SelfContained
+& '<TrafficMonitor目录>\plugins\AgentStatus\AgentStatusBridge.exe' ping
+& '<TrafficMonitor目录>\plugins\AgentStatus\AgentStatusBridge.exe' snapshot
+& '<TrafficMonitor目录>\plugins\AgentStatus\AgentStatusBridge.exe' start
+& '<TrafficMonitor目录>\plugins\AgentStatus\AgentStatusBridge.exe' stop
 ```
 
-输出位于 `build\x64`；可交付目录、ZIP 和 ZIP 校验文件位于 `dist`，名称包含项目版本和 `win-x64`。这些内容均由构建产生，不作为源码提交。具体流程见 [`docs/构建与验证.md`](docs/构建与验证.md)。
+`start/stop` 只管理显示 Bridge。Runtime 由其自身安装器和计划任务管理。详情窗口可选择其他 Runtime 运行目录，保存后自动重新订阅。
 
-## 隐私与边界
+诊断日志：`%LOCALAPPDATA%\TrafficMonitorAgentStatus\diagnostics.log`。日志不记录令牌、对话、工具参数或 HTTP 响应正文。仅读取 connection.json，不访问写令牌文件或调用 ingest。
 
-所有事件、状态和配置都保留在当前 Windows 用户的本机环境中。Bridge 使用当前用户专用的命名管道，并通过当前登录会话的共享内存向 TrafficMonitor 发布简短快照。
+## 开发
 
-该状态显示不是安全边界：同一 Windows 用户下的其他进程理论上可以发送伪造状态。插件不能代替 Agent 自身的授权界面。
+依赖 .NET 10 SDK、MSVC x64 和 Windows SDK。详见 [构建与验证](docs/构建与验证.md) 和 [架构](docs/项目架构与安装方案.md)。
+
+```powershell
+.\build.ps1 -Toolchain '<同时包含VC和Windows Kits的目录>' -SelfContained
+.\tests\Integration.ps1
+```
+
+构建输出在 build/x64，自包含发布包和校验文件在 dist，不提交生成产物。当前使用 TrafficMonitor API 6 和固定示例文本预留宽度，仅支持 Windows x64；状态准确性受 Runtime 对相应 Agent 版本和事件格式的覆盖限制。
 
 ## 许可证
 
-项目原创代码采用 [MIT License](LICENSE)，版权所有 © 2026 aoang-git。`plugin/PluginInterface.h` 及自包含发布包中的第三方组件适用各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-## 当前限制
-
-- Codex Desktop 依赖未承诺稳定格式的本机会话日志，需要随客户端版本持续验证。
-- 任务栏宽度当前由 TrafficMonitor 依据固定示例文本预留；动态宽度列入后续计划。
-- Codex Desktop 依赖本地日志格式；监听器使用文件变化通知和低频扫描兜底，并限制恢复窗口、单轮读取量及活动文件数量。
-- 当前仅提供 x64 构建，尚未覆盖 WSL、远程主机和多用户服务场景。
-
-## 开发状态
-
-当前版本为首个公开候选版本。已有状态机、来源映射、原生插件 ABI、集成回放和三种来源的实机验证；Codex CLI/TUI、Gemini CLI、真实授权解除、发布包干净环境安装及长期运行仍需继续验证。
+原创代码采用 [MIT](LICENSE)。原生插件接口及引用的 Runtime 客户端代码见 [第三方声明](THIRD_PARTY_NOTICES.md)。

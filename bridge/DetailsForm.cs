@@ -1,69 +1,65 @@
 using System.Text.Json;
-
 namespace AgentStatus;
 
 public sealed class DetailsForm : Form
 {
     readonly SettingsStore settings = new();
-    readonly Label heading = new() { Dock = DockStyle.Top, Height = 78, Padding = new Padding(14), AutoEllipsis = true, Text = "正在连接…", Font = new Font("Microsoft YaHei UI", 13) };
-    readonly FlowLayoutPanel settingsPanel = new() { Dock = DockStyle.Top, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(0, 70), Padding = new Padding(8, 5, 8, 5), WrapContents = true, AutoScroll = false };
-    readonly CheckBox showSource = new() { Text = "显示来源", AutoSize = true, Margin = new Padding(4, 7, 10, 3) };
-    readonly NumericUpDown completionSeconds = new() { Minimum = 0, Maximum = 60, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
-    readonly NumericUpDown noticeSeconds = new() { Minimum = 1, Maximum = 600, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
-    readonly NumericUpDown maxWorkingMinutes = new() { Minimum = 1, Maximum = 120, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
-    readonly NumericUpDown maxWaitingMinutes = new() { Minimum = 1, Maximum = 1440, DecimalPlaces = 0, Width = 80, Margin = new Padding(2, 3, 10, 3) };
-    readonly NumericUpDown pollIntervalMs = new() { Minimum = 200, Maximum = 3000, Increment = 50, Width = 100, Margin = new Padding(2, 3, 10, 3) };
-    readonly Label settingsStatus = new() { AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(4, 8, 4, 3) };
-    readonly DataGridView table = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoGenerateColumns = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, RowHeadersVisible = false, BackgroundColor = SystemColors.Window };
+    readonly Label heading = new() { Dock = DockStyle.Top, Height = 68, Padding = new Padding(12), Text = "正在连接显示桥接…", Font = new Font("Microsoft YaHei UI", 12), AutoEllipsis = true };
+    readonly TextBox runtimeDirectory = new() { Width = 440 };
+    readonly CheckBox showSource = new() { Text = "显示来源", AutoSize = true };
+    readonly NumericUpDown completion = new() { Minimum = 0, Maximum = 60, Width = 65 };
+    readonly NumericUpDown notice = new() { Minimum = 1, Maximum = 600, Width = 65 };
+    readonly NumericUpDown working = new() { Minimum = 1, Maximum = 120, Width = 65 };
+    readonly NumericUpDown waiting = new() { Minimum = 1, Maximum = 1440, Width = 65 };
+    readonly Label status = new() { AutoSize = true };
+    readonly DataGridView table = new() { Dock = DockStyle.Fill, ReadOnly = true, AllowUserToAddRows = false, AllowUserToDeleteRows = false, AutoGenerateColumns = false, RowHeadersVisible = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect, MultiSelect = false, BackgroundColor = SystemColors.Window };
     readonly System.Windows.Forms.Timer timer = new() { Interval = 1000 };
-    readonly Label footer = new() { Dock = DockStyle.Bottom, Height = 45, Padding = new Padding(10), Text = "只显示状态，不代替回答或授权。清除提醒后状态将标记为未知。" };
+    string[] knownSources = [];
     bool updating;
     public DetailsForm()
     {
-        Text = "Agent 状态 · TrafficMonitor"; Size = new Size(920, 470); MinimumSize = new Size(650, 350);
-        Font = new Font("Microsoft YaHei UI", 9); StartPosition = FormStartPosition.CenterScreen;
-        LoadSettingsIntoControls();
-        foreach (var (field, label, width) in new[] { ("Source", "来源", 110), ("Project", "项目", 170), ("State", "状态", 100), ("Tools", "工具数", 65), ("UpdatedAt", "最近事件", 180), ("Note", "说明", 220) })
-            table.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = field, HeaderText = label, Width = width });
-        settingsPanel.Controls.Add(showSource);
-        settingsPanel.Controls.Add(new Label { Text = "完成提示（秒）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
-        settingsPanel.Controls.Add(completionSeconds);
-        settingsPanel.Controls.Add(new Label { Text = "未知/异常提示（秒）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
-        settingsPanel.Controls.Add(noticeSeconds);
-        settingsPanel.Controls.Add(new Label { Text = "工作超时（分钟）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
-        settingsPanel.Controls.Add(maxWorkingMinutes);
-        settingsPanel.Controls.Add(new Label { Text = "等待超时（分钟）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
-        settingsPanel.Controls.Add(maxWaitingMinutes);
-        settingsPanel.Controls.Add(new Label { Text = "扫描间隔（毫秒）", AutoSize = true, Margin = new Padding(4, 8, 2, 3) });
-        settingsPanel.Controls.Add(pollIntervalMs);
-        var saveSettings = new Button { Text = "保存设置", AutoSize = true, Margin = new Padding(4, 3, 4, 3) };
-        saveSettings.Click += (_, _) => SaveSettings();
-        settingsPanel.Controls.Add(saveSettings);
-        var resetSettings = new Button { Text = "恢复默认", AutoSize = true, Margin = new Padding(4, 3, 4, 3) };
-        resetSettings.Click += (_, _) => { settings.ResetToDefaults(); LoadSettingsIntoControls(); settingsStatus.Text = "已恢复默认设置"; };
-        settingsPanel.Controls.Add(resetSettings);
-        var displaySettings = new Button { Text = "来源与文本设置", AutoSize = true, Margin = new Padding(4, 3, 4, 3) };
-        displaySettings.Click += (_, _) =>
+        Text = "Agent 状态 · Runtime"; Size = new Size(1000, 540); MinimumSize = new Size(740, 450);
+        Font = new Font("Microsoft YaHei UI", 9); StartPosition = FormStartPosition.CenterScreen; AutoScaleMode = AutoScaleMode.Dpi;
+        var config = settings.Current;
+        runtimeDirectory.Text = config.RuntimeDirectory; showSource.Checked = config.ShowSource;
+        completion.Value = config.CompletionToastMs / 1000; notice.Value = config.NoticeToastMs / 1000;
+        working.Value = Math.Max(1, config.MaxWorkingMs / 60000); waiting.Value = config.MaxWaitingMs / 60000;
+        var options = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10), WrapContents = true };
+        options.Controls.Add(new Label { Text = "Runtime 目录", AutoSize = true }); options.Controls.Add(runtimeDirectory);
+        var browse = new Button { Text = "选择目录", AutoSize = true };
+        browse.Click += (_, _) => { using var dialog = new FolderBrowserDialog { InitialDirectory = runtimeDirectory.Text }; if (dialog.ShowDialog(this) == DialogResult.OK) runtimeDirectory.Text = dialog.SelectedPath; };
+        options.Controls.Add(browse); options.SetFlowBreak(browse, true);
+        options.Controls.Add(showSource);
+        foreach (var pair in new[] { ("完成提示（秒）", completion), ("异常提示（秒）", notice), ("工作超时（分）", working), ("确认超时（分）", waiting) })
+        { options.Controls.Add(new Label { Text = pair.Item1, AutoSize = true }); options.Controls.Add(pair.Item2); }
+        var save = new Button { Text = "保存设置", AutoSize = true };
+        save.Click += (_, _) =>
         {
-            using var dialog = new DisplaySettingsForm(settings);
-            dialog.ShowDialog(this);
+            try
+            {
+                settings.Save(settings.Current with { RuntimeDirectory = runtimeDirectory.Text, ShowSource = showSource.Checked,
+                    CompletionToastMs = (int)completion.Value * 1000, NoticeToastMs = (int)notice.Value * 1000,
+                    MaxWorkingMs = (int)working.Value * 60000, MaxWaitingMs = (int)waiting.Value * 60000 });
+                runtimeDirectory.Text = settings.Current.RuntimeDirectory; status.Text = "已保存";
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException) { status.Text = "保存失败，请检查目录"; }
         };
-        settingsPanel.Controls.Add(displaySettings);
-        settingsPanel.Controls.Add(settingsStatus);
-        var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 43, Padding = new Padding(8) };
-        var start = new Button { Text = "启动接收器", AutoSize = true };
-        start.Click += async (_, _) => { try { await Program.EnsureStarted(); await RefreshState(); } catch { heading.Text = "接收器启动失败，请查看诊断日志"; } };
-        var ack = new Button { Text = "清除所选提醒", AutoSize = true };
-        ack.Click += async (_, _) =>
+        var display = new Button { Text = "来源与文本", AutoSize = true };
+        display.Click += (_, _) => { using var dialog = new DisplaySettingsForm(settings, knownSources); dialog.ShowDialog(this); };
+        options.Controls.Add(save); options.Controls.Add(display); options.Controls.Add(status);
+        foreach (var (field, label, width) in new[] { ("Source", "来源", 100), ("State", "状态", 110), ("Tools", "工具数", 65), ("Confirmations", "确认数", 65), ("SessionId", "会话", 240), ("OperationId", "轮次", 190), ("UpdatedAt", "最近活动", 180) })
+            table.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = field, HeaderText = label, Width = width });
+        var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 48, Padding = new Padding(8) };
+        var start = new Button { Text = "启动显示桥接", AutoSize = true };
+        start.Click += async (_, _) => { try { await Program.EnsureStarted(); await RefreshState(); } catch { heading.Text = "显示桥接启动失败"; } };
+        var clear = new Button { Text = "清除所选提醒", AutoSize = true };
+        clear.Click += async (_, _) =>
         {
             if (table.CurrentRow?.DataBoundItem is SessionView selected)
-            {
-                try { await Wire.Request(new { op = "ack", key = selected.Key }); await RefreshState(); }
-                catch { heading.Text = "接收器未连接"; }
-            }
+                try { await Wire.Request(new { op = "ack", key = selected.Key }); await RefreshState(); } catch { heading.Text = "显示桥接未连接"; }
         };
-        actions.Controls.Add(start); actions.Controls.Add(ack);
-        Controls.Add(table); Controls.Add(settingsPanel); Controls.Add(heading); Controls.Add(actions); Controls.Add(footer);
+        actions.Controls.Add(start); actions.Controls.Add(clear);
+        Controls.Add(table); Controls.Add(options); Controls.Add(heading); Controls.Add(actions);
         timer.Tick += async (_, _) => await RefreshState();
         Shown += async (_, _) => { timer.Start(); await RefreshState(); };
         FormClosed += (_, _) => timer.Dispose();
@@ -74,51 +70,16 @@ public sealed class DetailsForm : Form
         updating = true;
         try
         {
-            var raw = await Wire.Request(new { op = "snapshot" });
-            var snapshot = raw.Deserialize<Snapshot>(JsonWire.Options)!;
+            var snapshot = (await Wire.Request(new { op = "snapshot" })).Deserialize<Snapshot>(JsonWire.Options)!;
             if (IsDisposed) return;
-            var key = (table.CurrentRow?.DataBoundItem as SessionView)?.Key;
-            heading.Text = snapshot.Text.Length == 0 ? "无活动 Agent" : snapshot.Text;
+            knownSources = snapshot.KnownSources;
+            heading.Text = snapshot.RuntimeStatus + (snapshot.Text.Length > 0 ? " · " + snapshot.Text : "");
+            var selectedKey = (table.CurrentRow?.DataBoundItem as SessionView)?.Key;
             table.DataSource = snapshot.Sessions;
-            if (key != null) foreach (DataGridViewRow row in table.Rows) if ((row.DataBoundItem as SessionView)?.Key == key) { table.CurrentCell = row.Cells[0]; break; }
+            foreach (DataGridViewRow row in table.Rows)
+                if ((row.DataBoundItem as SessionView)?.Key == selectedKey) { table.CurrentCell = row.Cells[0]; break; }
         }
-        catch { if (!IsDisposed) heading.Text = "接收器未连接 · 可点击下方按钮启动"; }
+        catch { if (!IsDisposed) heading.Text = "显示桥接未连接"; }
         finally { updating = false; }
-    }
-
-    void LoadSettingsIntoControls()
-    {
-        var config = settings.Current;
-        showSource.Checked = config.ShowSource;
-        completionSeconds.Value = config.CompletionToastMs / 1000;
-        noticeSeconds.Value = Math.Clamp(config.NoticeToastMs / 1000, noticeSeconds.Minimum, noticeSeconds.Maximum);
-        maxWorkingMinutes.Value = Math.Max(1, config.MaxWorkingMs / 60000);
-        maxWaitingMinutes.Value = Math.Clamp(config.MaxWaitingMs / 60000, (int)maxWaitingMinutes.Minimum, (int)maxWaitingMinutes.Maximum);
-        pollIntervalMs.Value = config.CodexPollIntervalMs;
-    }
-
-    void SaveSettings()
-    {
-        try
-        {
-            var current = settings.Current;
-            settings.Save(current with
-            {
-                ShowSource = showSource.Checked,
-                CompletionToastMs = (int)completionSeconds.Value * 1000,
-                NoticeToastMs = (int)noticeSeconds.Value * 1000,
-                MaxWorkingMs = (int)maxWorkingMinutes.Value * 60000,
-                MaxWaitingMs = (int)maxWaitingMinutes.Value * 60000,
-                CodexPollIntervalMs = (int)pollIntervalMs.Value
-            });
-            // Re-read so the controls show the normalized values: NoticeToastMs
-            // is always raised above the completion toast.
-            LoadSettingsIntoControls();
-            settingsStatus.Text = "已保存";
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            settingsStatus.Text = "保存失败，请检查配置目录权限";
-        }
     }
 }

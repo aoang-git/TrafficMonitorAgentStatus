@@ -10,11 +10,20 @@ namespace AgentStatus;
 
 public static class Names
 {
-    public static string Suffix => WindowsIdentity.GetCurrent().User!.Value + "-" + Process.GetCurrentProcess().SessionId;
+    public static string Instance
+    {
+        get
+        {
+            string id = Environment.GetEnvironmentVariable("TMAS_INSTANCE") ?? "";
+            if (id.Length > 32 || id.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_'))) throw new InvalidDataException("Invalid instance name");
+            return id.Length == 0 ? "" : "-" + id;
+        }
+    }
+    public static string Suffix => WindowsIdentity.GetCurrent().User!.Value + "-" + Process.GetCurrentProcess().SessionId + Instance;
     public static string Pipe => "TMAS-v1-" + Suffix;
     public static string Map => "Local\\TMAS-v1-" + Suffix;
     public static string Lock => "Local\\TMAS-lock-v1-" + Suffix;
-    public static string DataDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TrafficMonitorAgentStatus");
+    public static string DataDir => Environment.GetEnvironmentVariable("TMAS_DATA_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "TrafficMonitorAgentStatus");
 }
 
 public sealed class SnapshotMap : IDisposable
@@ -44,6 +53,7 @@ public sealed class SnapshotMap : IDisposable
 public static class Wire
 {
     public const int MaxBytes = 65536;
+    public static T Read<T>(string json) => JsonSerializer.Deserialize<T>(json, JsonWire.Options) ?? throw new InvalidDataException("Empty response");
     public static async Task<byte[]> Read(Stream stream, CancellationToken ct, int max = MaxBytes)
     {
         byte[] header = new byte[4];
@@ -75,14 +85,17 @@ public sealed class Server
 {
     readonly SettingsStore settings = new();
     readonly StateStore state;
+    CancellationTokenSource? stop;
 
     public Server() { state = new StateStore(settings: settings); }
 
-    public async Task Run(CancellationToken ct)
+    public async Task Run(CancellationToken cancellationToken)
     {
+        using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        stop = lifetime;
+        var ct = lifetime.Token;
         using var snapshot = new SnapshotMap();
-        var codexDesktop = new CodexDesktopWatcher(state, settings);
-        var codexDesktopTask = codexDesktop.Run(ct);
+        var runtimeTask = new RuntimeMonitor(state, settings).Run(ct);
         // A fixed pool bounds concurrent connections and slow clients.
         var workers = Enumerable.Range(0, 8).Select(_ => Listen(ct)).ToArray();
         try
@@ -95,7 +108,7 @@ public sealed class Server
         {
             try { await Task.WhenAll(workers); }
             catch (OperationCanceledException) { }
-            try { await codexDesktopTask; }
+            try { await runtimeTask; }
             catch (OperationCanceledException) { }
         }
     }
@@ -113,30 +126,14 @@ public sealed class Server
                 object result;
                 switch (op)
                 {
-                    case "ping": result = new { ok = true, version = "0.1.3", pid = Environment.ProcessId }; break;
+                    case "ping": result = new { ok = true, version = "0.2.0", pid = Environment.ProcessId }; break;
                     case "snapshot": result = state.GetSnapshot(); break;
                     case "ack": result = new { ok = state.Acknowledge(root.GetProperty("key").GetString() ?? "") }; break;
-                    case "emit":
-                        var events = root.GetProperty("events").Deserialize<List<StatusEvent>>(JsonWire.Options) ?? [];
-                        if (events.Count > 32) throw new InvalidDataException("Too many events");
-                        bool ok = true;
-                        foreach (var e in events) ok &= state.Apply(e);
-                        result = new { ok }; break;
-                    case "hook":
-                        string source = root.GetProperty("source").GetString() ?? "";
-                        string? eventOverride = root.TryGetProperty("event_override", out var ev) ? ev.GetString() : null;
-                        var hookRaw = root.GetProperty("raw");
-                        var mapped = Adapters.Convert(source, hookRaw, string.IsNullOrEmpty(eventOverride) ? null : eventOverride);
-                        bool hookOk = true;
-                        foreach (var e in mapped) hookOk &= state.Apply(e);
-                        var rawName = string.IsNullOrEmpty(eventOverride) && hookRaw.ValueKind == JsonValueKind.Object && hookRaw.TryGetProperty("hook_event_name", out var hookName) && hookName.ValueKind == JsonValueKind.String
-                            ? hookName.GetString() ?? "unknown"
-                            : eventOverride ?? "unknown";
-                        Diagnostics.Write("hook", $"{SafeTag(source)}:{SafeTag(rawName)} mapped={mapped.Count} ok={hookOk}");
-                        result = new { ok = hookOk }; break;
+                    case "stop": result = new { ok = true }; break;
                     default: result = new { ok = false, error = "unknown_operation" }; break;
                 }
                 await Wire.Write(pipe, result, deadline.Token);
+                if (op == "stop") stop?.Cancel();
             }
             catch (OperationCanceledException) { }
             // InvalidDataException derives from SystemException, not IOException,
@@ -147,7 +144,7 @@ public sealed class Server
         }
     }
 
-    static string SafeTag(string value) => new(value.Where(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.').Take(64).ToArray());
+
 }
 
 public static class Diagnostics

@@ -14,7 +14,7 @@ namespace {
 HMODULE moduleHandle;
 SRWLOCK cacheLock = SRWLOCK_INIT;
 std::wstring value;
-std::wstring tooltip = L"无活动 Agent";
+std::wstring tooltip = L"显示桥接未连接";
 
 std::wstring MappingName() {
     HANDLE token = nullptr;
@@ -27,7 +27,16 @@ std::wstring MappingName() {
     if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(bytes)->User.Sid, &sid)) return L"";
     DWORD session = 0; ProcessIdToSessionId(GetCurrentProcessId(), &session);
     std::wstring result = L"Local\\TMAS-v1-" + std::wstring(sid) + L"-" + std::to_wstring(session);
-    LocalFree(sid); return result;
+    LocalFree(sid);
+    wchar_t instance[34];
+    DWORD length = GetEnvironmentVariableW(L"TMAS_INSTANCE", instance, 34);
+    if (length > 32) return L"";
+    if (length) {
+        for (DWORD i = 0; i < length; ++i)
+            if (!((instance[i] >= L'0' && instance[i] <= L'9') || (instance[i] >= L'A' && instance[i] <= L'Z') || (instance[i] >= L'a' && instance[i] <= L'z') || instance[i] == L'-' || instance[i] == L'_')) return L"";
+        result += L"-" + std::wstring(instance);
+    }
+    return result;
 }
 
 void OpenDetails(HWND parent) {
@@ -56,7 +65,7 @@ public:
     const wchar_t* GetItemId() const override { return L"TMASAgentStatusV1"; }
     const wchar_t* GetItemLableText() const override { return L""; }
     const wchar_t* GetItemValueText() const override { return Cached(false); }
-    const wchar_t* GetItemValueSampleText() const override { return L"Claudecode:调用工具"; }
+    const wchar_t* GetItemValueSampleText() const override { return L"Claude:调用工具"; }
     int OnMouseEvent(MouseEventType type, int, int, void* window, int) override {
         if (type == MT_LCLICKED) { OpenDetails(static_cast<HWND>(window)); return 1; }
         return 0;
@@ -69,7 +78,7 @@ public:
     IPluginItem* GetItem(int index) override { return index == 0 ? &item : nullptr; }
     void DataRequired() override {
         try {
-            std::wstring next, tip = L"无活动 Agent";
+            std::wstring next, tip = L"显示桥接未连接";
             auto name = MappingName();
             HANDLE map = name.empty() ? nullptr : OpenFileMappingW(FILE_MAP_READ, FALSE, name.c_str());
             if (map) {
@@ -104,10 +113,10 @@ public:
     const wchar_t* GetInfo(PluginInfoIndex index) override {
         switch (index) {
         case TMI_NAME: return L"Agent 状态";
-        case TMI_DESCRIPTION: return L"通过本机桥接显示 Agent 工作、工具调用与等待状态";
+        case TMI_DESCRIPTION: return L"订阅 Agent Status Runtime 显示本机 Agent 状态";
         case TMI_AUTHOR: return L"TrafficMonitorAgentStatus";
         case TMI_COPYRIGHT: return L"2026 TrafficMonitorAgentStatus contributors";
-        case TMI_VERSION: return L"0.1.3";
+        case TMI_VERSION: return L"0.2.0";
         case TMI_URL: return L"";
         default: return L"";
         }
