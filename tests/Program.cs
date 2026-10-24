@@ -36,16 +36,26 @@ try
     s = NewState(); s.Apply(F(operation: "first")); s.Apply(F(operation: "second"));
     Check(!s.Apply(F("lifecycle.observed", operation: "first", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "completed" })) && Text(s) == "Codex:工作中", "old operation cannot finish current work");
     s.Apply(F("lifecycle.observed", operation: "second", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "completed" }));
-    Check(Text(s) == "Codex:本轮完成", "explicit turn completion");
+    Check(Text(s) == "Codex:任务完成", "explicit turn completion");
     Check(!s.Apply(F(operation: "second")), "late activity cannot revive explicit completion");
     clock += 5001; Check(Text(s) == "", "completion expires");
     s = NewState(); s.Apply(F("lifecycle.observed", data: new() { Scope = "agent_run", Phase = "ended", Outcome = "completed" })); Check(Text(s) == "Codex:任务完成", "run completion");
-    s = NewState(); s.Apply(F("lifecycle.observed", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "interrupted" })); Check(Text(s) == "Codex:已中断", "interruption result");
-    s = NewState(); s.Apply(F("state.reported", data: new() { State = "failed" }) with { Origin = "external" }); Check(Text(s) == "Codex:异常", "external failure");
+    s = NewState(); s.Apply(F("lifecycle.observed", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "interrupted" })); Check(Text(s) == "Codex:任务中断", "interruption result");
+    s = NewState(); s.Apply(F("state.reported", data: new() { State = "failed" }) with { Origin = "external" }); Check(Text(s) == "Codex:任务中断", "external failure");
+    s = NewState(); s.Apply(F("lifecycle.observed", data: new() { Scope = "agent_turn", Phase = "ended", Outcome = "failed" }));
+    Check(Text(s) == "Codex:任务中断", "native failure shares interruption result");
+    clock += 5001; Check(Text(s) == "Codex:任务中断", "interruption uses notice duration");
+    clock += 10000; Check(Text(s) == "", "interruption notice expires");
+    s = NewState(); s.Apply(F("state.reported", data: new() { State = "interrupted" }) with { Origin = "external" });
+    Check(Text(s) == "Codex:任务中断", "external interruption shares failure result");
+    settings.Save(settings.Current with { DisplayTexts = new() { ["taskCompleted"] = "任务完成", ["turnCompleted"] = "本轮完成", ["interrupted"] = "已中断", ["error"] = "异常" } });
+    Check(settings.Current.DisplayTexts.Count == 6 && settings.Current.DisplayTexts["taskInterrupted"] == "任务中断"
+        && !settings.Current.DisplayTexts.ContainsKey("turnCompleted"), "settings expose only the six merged display states");
+    settings.ResetToDefaults();
     s = NewState(); s.Apply(F(agent: "claude"));
     s.Apply(F("message.observed", agent: "claude", data: new() { Role = "assistant", StopReason = "end_turn" }));
     clock += 2999; Check(Text(s) == "Claude:工作中", "settle delay does not finish early");
-    clock++; Check(Text(s) == "Claude:本轮完成", "normal quiet end shows result without explanation");
+    clock++; Check(Text(s) == "Claude:任务完成", "normal quiet end shows result without explanation");
     Check(!s.GetSnapshot().Tooltip.Contains("推断"), "tooltip contains final result only");
     s.Apply(F("tool.observed", agent: "claude", data: new() { CallId = "later", Phase = "requested" })); Check(Text(s) == "Claude:调用工具", "new evidence after quiet end resumes activity");
     s = NewState(); s.Apply(F("tool.observed", agent: "pi", data: new() { CallId = "t", Phase = "requested" }));
@@ -55,7 +65,7 @@ try
     s.Apply(F("message.observed", agent: "claude", data: new() { Role = "assistant", StopReason = "end_turn" })); clock += 3001;
     Check(Text(s) == "Claude:工作中", "sequence gap prevents quiet success");
     s = NewState(); s.Apply(F()); clock += 299000;
-    s.Apply(F("state.reported", data: new() { State = "unknown" })); clock += 1001;
+    s.Apply(F("lifecycle.observed", data: new() { Scope = "agent_turn", Phase = "ended" })); clock += 1001;
     Check(Text(s) == "Codex:状态未知", "unknown does not renew progress"); clock += 15001; Check(Text(s) == "", "unknown notice expires");
     s = NewState(); s.Apply(F("approval.observed", data: new() { RequestId = "r", Phase = "requested" })); clock += 300001;
     Check(Text(s) == "Codex:待确认", "approval has longer timeout"); clock += 1500000;
@@ -98,6 +108,7 @@ try
     await File.WriteAllTextAsync(discoveryFile, "{\"url\":\"http://example.com\",\"token\":\"secret\",\"pid\":1,\"epoch\":\"e\"}");
     badDiscovery = false; try { await RuntimeConnection.LoadAsync(discovery, default); } catch (InvalidDataException) { badDiscovery = true; }
     Check(badDiscovery, "nonloopback discovery rejected");
+    ReportedStateTests.Run(root, Check);
     await RuntimeIntegration.Run(root, Check, args);
     Console.WriteLine($"PASS: {passed} checks");
 }

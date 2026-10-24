@@ -47,7 +47,7 @@ if ($LASTEXITCODE) { throw 'Package publish failed.' }
 Copy-Item -LiteralPath (Join-Path $out 'AgentStatus.dll') -Destination $pkg
 foreach ($file in @('README.md','LICENSE','THIRD_PARTY_NOTICES.md')) { Copy-Item -LiteralPath (Join-Path $workspace $file) -Destination $pkg }
 foreach ($file in @('Install-PluginFiles.ps1','Remove-LegacyHooks.ps1')) { Copy-Item -LiteralPath (Join-Path $workspace ('tools\'+$file)) -Destination $pkg }
-Get-ChildItem -LiteralPath (Join-Path $workspace 'docs') -File | Copy-Item -Destination (Join-Path $pkg 'docs')
+Get-ChildItem -LiteralPath (Join-Path $workspace 'docs') -Force | Copy-Item -Destination (Join-Path $pkg 'docs') -Recurse
 $dotnetRoot = Split-Path -Parent (Get-Command dotnet.exe).Source
 foreach ($notice in @('LICENSE.txt','ThirdPartyNotices.txt')) { Copy-Item -LiteralPath (Join-Path $dotnetRoot $notice) -Destination (Join-Path $pkg 'licenses\dotnet') }
 $manifest = Get-ChildItem -LiteralPath $pkg -Recurse -File | Sort-Object FullName | ForEach-Object {

@@ -5,6 +5,8 @@ public sealed class DisplaySettingsForm : Form
     readonly SettingsStore settings;
     readonly Dictionary<string, CheckBox> sourceBoxes = new(StringComparer.OrdinalIgnoreCase);
     readonly Dictionary<string, TextBox> textBoxes = new(StringComparer.OrdinalIgnoreCase);
+    readonly CheckBox showReported = new() { Text = "主动上报显示", AutoSize = true, Margin = new Padding(4, 6, 12, 4) };
+    readonly NumericUpDown reportedLease = new() { Minimum = 1, Maximum = 3600, Width = 85 };
     readonly Label status = new() { AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(8, 9, 4, 4) };
 
     public DisplaySettingsForm(SettingsStore settings, IEnumerable<string>? observedSources = null)
@@ -25,7 +27,7 @@ public sealed class DisplaySettingsForm : Form
             .Except(AgentStatusSettings.SourceDefinitions.Select(s => s.Id), StringComparer.OrdinalIgnoreCase)
             .Distinct(StringComparer.OrdinalIgnoreCase).Select(id => (Id: id, Label: StateStore.DisplaySource(id)))).ToArray();
         var sources = new GroupBox { Text = "显示哪些工具", Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(10) };
-        var sourceTable = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = (sourceDefinitions.Length + 1) / 2 };
+        var sourceTable = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = (sourceDefinitions.Length + 1) / 2 + 1 };
         sourceTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         sourceTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         for (var i = 0; i < sourceDefinitions.Length; i++)
@@ -36,6 +38,13 @@ public sealed class DisplaySettingsForm : Form
             sourceBoxes[definition.Id] = check;
             sourceTable.Controls.Add(check, i % 2, i / 2);
         }
+        sourceTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        var reportedOptions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 0) };
+        reportedOptions.Controls.Add(showReported);
+        reportedOptions.Controls.Add(new Label { Text = "状态租约（秒）", AutoSize = true, Margin = new Padding(4, 7, 4, 4) });
+        reportedOptions.Controls.Add(reportedLease);
+        sourceTable.Controls.Add(reportedOptions, 0, (sourceDefinitions.Length + 1) / 2);
+        sourceTable.SetColumnSpan(reportedOptions, 2);
         sources.Controls.Add(sourceTable);
         layout.Controls.Add(sources, 0, 0);
 
@@ -55,7 +64,7 @@ public sealed class DisplaySettingsForm : Form
         texts.Controls.Add(textTable);
         layout.Controls.Add(texts, 0, 1);
 
-        var note = new Label { Text = "未勾选的工具仍会被后台接收，但不会参与任务栏和详情列表显示。", AutoSize = true, MaximumSize = new Size(620, 0), Margin = new Padding(6, 10, 6, 8) };
+        var note = new Label { Text = "工具勾选仅控制采集；主动上报独立显示，到期自动清除。关闭显示不会停止后台接收。", AutoSize = true, MaximumSize = new Size(620, 0), Margin = new Padding(6, 10, 6, 8) };
         layout.Controls.Add(note, 0, 2);
         content.Controls.Add(layout);
 
@@ -74,6 +83,8 @@ public sealed class DisplaySettingsForm : Form
 
     void LoadValues(AgentStatusSettings config, string message)
     {
+        showReported.Checked = config.ShowReportedStates;
+        reportedLease.Value = config.ReportedStateLeaseMs / 1000;
         foreach (var pair in sourceBoxes) pair.Value.Checked = config.EnabledSources.GetValueOrDefault(pair.Key, true);
         foreach (var definition in AgentStatusSettings.DisplayDefinitions)
             textBoxes[definition.Key].Text = config.DisplayTexts.GetValueOrDefault(definition.Key, definition.DefaultText);
@@ -89,7 +100,7 @@ public sealed class DisplaySettingsForm : Form
             foreach (var pair in sourceBoxes) enabled[pair.Key] = pair.Value.Checked;
             var texts = new Dictionary<string, string>(current.DisplayTexts, StringComparer.OrdinalIgnoreCase);
             foreach (var definition in AgentStatusSettings.DisplayDefinitions) texts[definition.Key] = textBoxes[definition.Key].Text;
-            settings.Save(current with { EnabledSources = enabled, DisplayTexts = texts });
+            settings.Save(current with { EnabledSources = enabled, DisplayTexts = texts, ShowReportedStates = showReported.Checked, ReportedStateLeaseMs = (int)reportedLease.Value * 1000 });
             status.Text = "已保存，任务栏会自动更新";
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

@@ -1,56 +1,64 @@
 # TrafficMonitor Agent Status
 
-Windows x64 TrafficMonitor 插件，通过本机 [Agent Status Runtime](https://github.com/aoang-git/Agent_Status_Runtime) 显示 Agent 当前状态。版本 0.2.0 使用 Runtime schema 3，完整替换旧 Hook 和日志采集链路。
+写代码时不用一直切回 Agent 窗口看进度了。这个插件会把 Agent 的状态放到 Windows 任务栏里：在工作、调用工具、等你确认，还是已经完成，一眼就能看到。
 
-任务栏显示 `Codex:工作中`、`Claude:调用工具`、`DeepSeek:待确认`、`Pi:本轮完成` 等结果。待确认优先于工具、工作；同级显示最近活动会话。点击项目可查看各会话、配置 Runtime 目录、来源和状态文案。
+它是 [TrafficMonitor](https://github.com/zhongyang219/TrafficMonitor) 的插件，状态由本机的 Agent Status Runtime 提供。目前支持 Windows x64。
 
-## 安装
+## 看看效果
 
-先安装并运行 Runtime 0.3.0 或兼容 schema 3 的版本。默认连接文件位于 `%APPDATA%\AgentStatusRuntime\private\connection.json`，不需要复制令牌或填写端口。
+![任务栏里的六种状态](docs/images/taskbar-states.png)
 
-解压发布包，在普通用户 PowerShell 7 中执行：
+以上是实际 TrafficMonitor 显示区域的截图拼图，使用隔离演示会话依次展示六种状态。各工具能提供哪些状态，取决于 Runtime 的采集和上报能力。
 
-```powershell
-.\Install-PluginFiles.ps1 -TrafficMonitorDirectory '<TrafficMonitor目录>'
-```
+## 怎么安装
 
-安装器校验包内 SHA-256，备份旧插件和配置，精确移除 Claude、Cursor、Gemini 中指向旧插件目录的 Hook，替换本插件目录并配置当前用户登录启动 Bridge。备份位于 `%LOCALAPPDATA%\TrafficMonitorAgentStatus\backups`。其他插件、Agent 配置和 Runtime 不受影响。若 TrafficMonitor 已运行，安装器关闭并重新启动它；首次安装请自行启动 TrafficMonitor 并在任务栏项目中启用“Agent 状态”。
+1. 先到 [Agent Status Runtime 下载页](https://github.com/aoang-git/Agent_Status_Runtime/releases)，下载并运行 `agent-status-setup.exe`。装好后它会在后台运行，后续登录也会自动启动。
+2. 准备本插件 **0.2.2 或更新版本**的 Windows x64 压缩包，解压到一个普通文件夹。发布包放在[本插件发布页](https://github.com/aoang-git/TrafficMonitorAgentStatus/releases)；如果还没有对应版本，可以按[构建说明](docs/构建与验证.md)自行生成。
+3. 在解压后的文件夹打开 **PowerShell 7**，执行下面的安装命令，把路径换成你自己的 TrafficMonitor 文件夹：
 
-旧配置不迁移，首次切换使用新版默认值；再次安装保留版本 2 的显示配置。自包含发布包无需另装 .NET。
+   ```powershell
+   .\Install-PluginFiles.ps1 -TrafficMonitorDirectory 'D:\Tools\TrafficMonitor'
+   ```
 
-## 状态与来源
+4. 启动 TrafficMonitor，在任务栏的显示项目里勾选 **Agent 状态**。如果安装前 TrafficMonitor 已经开着，安装脚本会将它重新启动。
 
-- Runtime 内置观察 Codex、Claude、DeepSeek DSH、Pi；其他 Agent 通过 Runtime 标准上报接入，插件会自动识别来源。
-- Cursor、Gemini 旧 Hook 已移除，需要独立 Runtime 上报端才能显示。本插件不安装 Agent Hook，也不读取会话文件。
-- 正常结束显示“本轮完成”，明确整项任务完成显示“任务完成”，中断显示“已中断”，失败显示“异常”。
-- 正常消息在没有待处理工具、确认或证据缺口时，静默 3 秒后结束。普通活动默认 5 分钟、待确认默认 30 分钟无进展后显示“状态未知”。判断依据不作为状态后缀显示。
-- 完成提示默认 5 秒；异常、未知、中断默认 15 秒。活动优先于结束提示，空闲任务栏留空。
-- Runtime 只广播订阅后新活动。启动、断线、服务换代、事件缺口均清空旧任务，重新连接不会恢复历史任务。
+Runtime 已经装过并在运行的话，第一步可以跳过。插件安装包自带运行依赖，不用再单独安装 .NET。安装脚本会先备份旧文件和配置，再更新插件；已有的显示设置会保留。
 
-## 诊断
+## 平时怎么用
 
-```powershell
-& '<TrafficMonitor目录>\plugins\AgentStatus\AgentStatusBridge.exe' ping
-& '<TrafficMonitor目录>\plugins\AgentStatus\AgentStatusBridge.exe' snapshot
-& '<TrafficMonitor目录>\plugins\AgentStatus\AgentStatusBridge.exe' start
-& '<TrafficMonitor目录>\plugins\AgentStatus\AgentStatusBridge.exe' stop
-```
+不用每次手动启动。登录后显示桥接程序会在后台运行，有新活动时任务栏就会更新。点击任务栏里的 Agent 状态，可以打开详情和设置。
 
-`start/stop` 只管理显示 Bridge。Runtime 由其自身安装器和计划任务管理。详情窗口可选择其他 Runtime 运行目录，保存后自动重新订阅。
+- **工作中、调用工具、待确认**：看看 Agent 现在进行到哪一步。
+- **任务完成、任务中断**：显示一会儿后自动消失。
+- **状态未知**：暂时缺少足够的新进展，或者来源出了问题；它不代表任务成功。
 
-诊断日志：`%LOCALAPPDATA%\TrafficMonitorAgentStatus\diagnostics.log`。日志不记录令牌、对话、工具参数或 HTTP 响应正文。仅读取 connection.json，不访问写令牌文件或调用 ingest。
+没有活动时，任务栏的 Agent 文本会留空。刚启动或重新连接后，会等待新的活动，不把过去的任务重新显示出来。
 
-## 开发
+### 本地监测和主动上报
 
-依赖 .NET 10 SDK、MSVC x64 和 Windows SDK。详见 [构建与验证](docs/构建与验证.md) 和 [架构](docs/项目架构与安装方案.md)。
+Runtime 可以观察 Codex、Claude、DeepSeek DSH 和 Pi 的本地活动；其他工具也可以通过 Runtime 主动上报自己的状态。具体覆盖范围见[运行逻辑与排错](docs/运行逻辑与排错.md)。
 
-```powershell
-.\build.ps1 -Toolchain '<同时包含VC和Windows Kits的目录>' -SelfContained
-.\tests\Integration.ps1
-```
+本地监测会优先显示需要你关注的会话：待确认优先，其次是工具调用、工作中；同类状态选择最近更新的会话。
 
-构建输出在 build/x64，自包含发布包和校验文件在 dist，不提交生成产物。当前使用 TrafficMonitor API 6 和固定示例文本预留宽度，仅支持 Windows x64；状态准确性受 Runtime 对相应 Agent 版本和事件格式的覆盖限制。
+主动上报开启时，上报结果会优先显示。本地监测仍在后台更新，但不会打断它；新的主动上报会替换旧结果。上报默认保留 **60 秒**，到期后清除，再显示仍然有效的监测状态。这个时间可以自己改，不会因为上报端不再响应就一直占着任务栏。
 
-## 许可证
+## 可以调哪些设置
 
-原创代码采用 [MIT](LICENSE)。原生插件接口及引用的 Runtime 客户端代码见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+![来源、主动上报租约和状态文案设置](docs/images/display-settings.png)
+
+图中把租约设为了 20 秒，默认值是 60 秒，可以按自己的习惯调整。
+
+- 勾选需要看的工具，隐藏其他工具的本地监测状态。
+- 单独开关 **主动上报显示**，并调整 **状态租约**。它与工具勾选互不影响。
+- 把“工作中”“任务完成”等文字改成自己喜欢的叫法。
+- 在详情窗口调整是否显示来源、提示时长和监测超时；Runtime 用了其他运行目录时，也可以在这里选择。
+
+当前“待确认”的内置采集来自 DeepSeek 的审批记录，审批有时会自动通过；其他工具主动上报确认状态时也能显示。它只是状态提醒，不能代替 Agent 自己的确认或授权窗口。
+
+## 进一步了解
+
+- [运行逻辑与排错](docs/运行逻辑与排错.md)：状态含义、租约、日志和诊断命令。
+- [架构与安装细节](docs/项目架构与安装方案.md)：组件关系、配置和接口边界。
+- [构建与验证](docs/构建与验证.md)：从源码构建、回归测试和截图说明。
+
+项目采用 [MIT License](LICENSE)，第三方组件见 [THIRD_PARTY_NOTICES](THIRD_PARTY_NOTICES.md)。

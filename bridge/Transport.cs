@@ -126,7 +126,7 @@ public sealed class Server
                 object result;
                 switch (op)
                 {
-                    case "ping": result = new { ok = true, version = "0.2.0", pid = Environment.ProcessId }; break;
+                    case "ping": result = new { ok = true, version = "0.2.2", pid = Environment.ProcessId }; break;
                     case "snapshot": result = state.GetSnapshot(); break;
                     case "ack": result = new { ok = state.Acknowledge(root.GetProperty("key").GetString() ?? "") }; break;
                     case "stop": result = new { ok = true }; break;

@@ -67,9 +67,21 @@ try {
   $configVersion = 0
   if (Test-Path -LiteralPath $configPath) { try { $configVersion = ([IO.File]::ReadAllText($configPath) | ConvertFrom-Json).configVersion } catch { } }
   if ($configVersion -ne 2) {
-    $defaults = @{configVersion=2;runtimeDirectory=(Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'AgentStatusRuntime');showSource=$true;completionToastMs=5000;noticeToastMs=15000;maxWorkingMs=300000;maxWaitingMs=1800000;enabledSources=@{codex=$true;claude=$true;deepseek=$true;pi=$true};displayTexts=@{working='工作中';tool='调用工具';waiting='待确认';turnCompleted='本轮完成';taskCompleted='任务完成';interrupted='已中断';error='异常';unknown='状态未知'}}
+    $defaults = @{configVersion=2;runtimeDirectory=(Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'AgentStatusRuntime');showSource=$true;showReportedStates=$true;reportedStateLeaseMs=60000;completionToastMs=5000;noticeToastMs=15000;maxWorkingMs=300000;maxWaitingMs=1800000;enabledSources=@{codex=$true;claude=$true;deepseek=$true;pi=$true};displayTexts=@{working='工作中';tool='调用工具';waiting='待确认';taskCompleted='任务完成';taskInterrupted='任务中断';unknown='状态未知'}}
     [IO.File]::WriteAllText($configPath,($defaults | ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
   }
+  # Persist exactly the current display states, retaining custom text for surviving keys.
+  $installedConfig = [IO.File]::ReadAllText($configPath) | ConvertFrom-Json -AsHashtable
+  if (!$installedConfig.Contains('showReportedStates')) { $installedConfig.showReportedStates = $true }
+  if (!$installedConfig.Contains('reportedStateLeaseMs')) { $installedConfig.reportedStateLeaseMs = 60000 }
+  $displayDefaults = [ordered]@{working='工作中';tool='调用工具';waiting='待确认';taskCompleted='任务完成';taskInterrupted='任务中断';unknown='状态未知'}
+  $displayTexts = [ordered]@{}
+  foreach ($key in $displayDefaults.Keys) {
+    $value = if ($installedConfig.displayTexts -is [Collections.IDictionary]) { $installedConfig.displayTexts[$key] } else { $null }
+    $displayTexts[$key] = if ($value -is [string] -and ![string]::IsNullOrWhiteSpace($value)) { $value } else { $displayDefaults[$key] }
+  }
+  $installedConfig.displayTexts = $displayTexts
+  [IO.File]::WriteAllText($configPath,($installedConfig | ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new($false))
   $bridgeExe = Join-Path $bridgeTarget 'AgentStatusBridge.exe'
   if (!$SkipStartup) {
     if (!(Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run')) { New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' | Out-Null }

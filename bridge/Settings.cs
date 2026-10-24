@@ -6,6 +6,8 @@ public sealed record AgentStatusSettings
     public int ConfigVersion { get; init; } = 2;
     public string RuntimeDirectory { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AgentStatusRuntime");
     public bool ShowSource { get; init; } = true;
+    public bool ShowReportedStates { get; init; } = true;
+    public int ReportedStateLeaseMs { get; init; } = 60000;
     public int CompletionToastMs { get; init; } = 5000;
     public int NoticeToastMs { get; init; } = 15000;
     public int MaxWorkingMs { get; init; } = 5 * 60 * 1000;
@@ -17,8 +19,7 @@ public sealed record AgentStatusSettings
     public static readonly IReadOnlyList<(string Key, string Label, string DefaultText)> DisplayDefinitions =
     [
         ("working", "工作中", "工作中"), ("tool", "调用工具", "调用工具"), ("waiting", "待确认", "待确认"),
-        ("turnCompleted", "本轮完成", "本轮完成"), ("taskCompleted", "任务完成", "任务完成"),
-        ("interrupted", "已中断", "已中断"), ("error", "异常", "异常"), ("unknown", "状态未知", "状态未知")
+        ("taskCompleted", "任务完成", "任务完成"), ("taskInterrupted", "任务中断", "任务中断"), ("unknown", "状态未知", "状态未知")
     ];
     public static AgentStatusSettings Defaults => new()
     {
@@ -40,7 +41,7 @@ public sealed record AgentStatusSettings
         }
         string directory = string.IsNullOrWhiteSpace(RuntimeDirectory) ? Defaults.RuntimeDirectory : Path.GetFullPath(RuntimeDirectory.Trim());
         return this with { ConfigVersion = 2, RuntimeDirectory = directory, CompletionToastMs = Math.Clamp(CompletionToastMs, 0, 60000),
-            NoticeToastMs = Math.Clamp(NoticeToastMs, 1000, 600000), MaxWorkingMs = Math.Clamp(MaxWorkingMs, 30000, 7200000),
+            ReportedStateLeaseMs = Math.Clamp(ReportedStateLeaseMs, 1000, 3600000), NoticeToastMs = Math.Clamp(NoticeToastMs, 1000, 600000), MaxWorkingMs = Math.Clamp(MaxWorkingMs, 30000, 7200000),
             MaxWaitingMs = Math.Clamp(MaxWaitingMs, 60000, 86400000), EnabledSources = enabled, DisplayTexts = texts };
     }
 }

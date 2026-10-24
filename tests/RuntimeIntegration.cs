@@ -38,7 +38,17 @@ static class RuntimeIntegration
             var removed = await Wire.Request(new { op = "emit", events = new object[0] });
             check(!removed.GetProperty("ok").GetBoolean(), "legacy event IPC removed");
             await fake.Emit("waiting_confirmation"); await Await(s => s.Text == "Codex:待确认", "external confirmation display");
-            await fake.Emit("completed"); await Await(s => s.Text == "Codex:本轮完成", "external completion display");
+            await fake.Emit("completed"); await Await(s => s.Text == "Codex:任务完成", "external completion display");
+            await fake.EmitFileInput();
+            await Await(s => s.Text == "Codex:任务完成" && s.Sessions.Any(v => v.Origin == "file") && s.Sessions.Any(v => v.Origin == "external"), "reported and file SSE states remain separate with report priority");
+            settings.Save(settings.Current with { EnabledSources = new() { ["codex"] = false } });
+            await Await(s => s.Text == "Codex:任务完成" && s.Sessions.All(v => v.Origin == "external"), "file tool toggle cannot hide report through real SSE");
+            settings.Save(settings.Current with { ShowReportedStates = false });
+            await Await(s => s.Text == "" && s.Sessions.Count == 0, "reported checkbox hides result immediately");
+            settings.Save(settings.Current with { ShowReportedStates = true, ReportedStateLeaseMs = 1000 });
+            await Await(s => s.Text == "" && s.Sessions.Count == 0, "reported lease expiry removes real SSE result without unknown");
+            settings.Save(settings.Current with { EnabledSources = new(), ReportedStateLeaseMs = 60000 });
+            await Await(s => s.Text == "Codex:工作中" && s.Sessions.All(v => v.Origin == "file"), "expired report falls back to collected SSE session and does not revive after lease increase");
             fake.Drop(); await Await(s => !s.Connected && s.Sessions.Count == 0, "disconnect clears task state");
             await Await(s => s.Connected && s.Text == "", "reconnect never restores prior task");
             await fake.Emit("tool_activity", "second"); await Await(s => s.Text == "Codex:调用工具", "new activity after reconnect");
@@ -132,6 +142,13 @@ sealed class FakeRuntime : IAsyncDisposable
         await WaitFor(() => channel != null); Revision++;
         var fact = new RuntimeFact { Schema = 3, Id = Revision, Agent = "codex", SessionId = "fixture", SessionNamespace = "test", OperationId = operation,
             SourceId = "mock-source", Kind = "state.reported", Origin = "external", Data = new() { State = state } };
+        await channel!.Writer.WriteAsync(Frame("fact", JsonSerializer.Serialize(fact, JsonWire.Options)));
+    }
+    public async Task EmitFileInput()
+    {
+        await WaitFor(() => channel != null); Revision++;
+        var fact = new RuntimeFact { Schema = 3, Id = Revision, Agent = "codex", SessionId = "fixture", SessionNamespace = "test", OperationId = "first",
+            SourceId = "mock-source", Kind = "input.observed", Origin = "file", Data = new() };
         await channel!.Writer.WriteAsync(Frame("fact", JsonSerializer.Serialize(fact, JsonWire.Options)));
     }
     public async Task Gap() { Revision += 10; await channel!.Writer.WriteAsync(Frame("gap", JsonSerializer.Serialize(new { schema = 3, epoch = Epoch, revision = Revision }))); }

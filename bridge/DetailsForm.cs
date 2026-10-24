@@ -30,7 +30,7 @@ public sealed class DetailsForm : Form
         browse.Click += (_, _) => { using var dialog = new FolderBrowserDialog { InitialDirectory = runtimeDirectory.Text }; if (dialog.ShowDialog(this) == DialogResult.OK) runtimeDirectory.Text = dialog.SelectedPath; };
         options.Controls.Add(browse); options.SetFlowBreak(browse, true);
         options.Controls.Add(showSource);
-        foreach (var pair in new[] { ("完成提示（秒）", completion), ("异常提示（秒）", notice), ("工作超时（分）", working), ("确认超时（分）", waiting) })
+        foreach (var pair in new[] { ("完成提示（秒）", completion), ("提醒显示（秒）", notice), ("工作超时（分）", working), ("确认超时（分）", waiting) })
         { options.Controls.Add(new Label { Text = pair.Item1, AutoSize = true }); options.Controls.Add(pair.Item2); }
         var save = new Button { Text = "保存设置", AutoSize = true };
         save.Click += (_, _) =>
@@ -47,8 +47,13 @@ public sealed class DetailsForm : Form
         var display = new Button { Text = "来源与文本", AutoSize = true };
         display.Click += (_, _) => { using var dialog = new DisplaySettingsForm(settings, knownSources); dialog.ShowDialog(this); };
         options.Controls.Add(save); options.Controls.Add(display); options.Controls.Add(status);
-        foreach (var (field, label, width) in new[] { ("Source", "来源", 100), ("State", "状态", 110), ("Tools", "工具数", 65), ("Confirmations", "确认数", 65), ("SessionId", "会话", 240), ("OperationId", "轮次", 190), ("UpdatedAt", "最近活动", 180) })
+        foreach (var (field, label, width) in new[] { ("Source", "来源", 100), ("Origin", "方式", 100), ("State", "状态", 110), ("Tools", "工具数", 65), ("Confirmations", "确认数", 65), ("SessionId", "会话", 240), ("OperationId", "轮次", 190), ("UpdatedAt", "最近活动", 180) })
             table.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = field, HeaderText = label, Width = width });
+        table.CellFormatting += (_, e) =>
+        {
+            if (e.ColumnIndex >= 0 && table.Columns[e.ColumnIndex].DataPropertyName == "Origin" && e.Value is string origin)
+            { e.Value = origin == "external" ? "主动上报" : "采集"; e.FormattingApplied = true; }
+        };
         var actions = new FlowLayoutPanel { Dock = DockStyle.Bottom, Height = 48, Padding = new Padding(8) };
         var start = new Button { Text = "启动显示桥接", AutoSize = true };
         start.Click += async (_, _) => { try { await Program.EnsureStarted(); await RefreshState(); } catch { heading.Text = "显示桥接启动失败"; } };
