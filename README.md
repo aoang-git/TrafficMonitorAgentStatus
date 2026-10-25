@@ -13,16 +13,17 @@
 ## 怎么安装
 
 1. 先到 [Agent Status Runtime 下载页](https://github.com/aoang-git/Agent_Status_Runtime/releases)，下载并运行 `agent-status-setup.exe`。装好后它会在后台运行，后续登录也会自动启动。
-2. 准备本插件 **0.2.3 或更新版本**的 Windows x64 压缩包，解压到一个普通文件夹。发布包放在[本插件发布页](https://github.com/aoang-git/TrafficMonitorAgentStatus/releases)；如果还没有对应版本，可以按[构建说明](docs/构建与验证.md)自行生成。
-3. 在解压后的文件夹打开 **PowerShell 7**，执行下面的安装命令，把路径换成你自己的 TrafficMonitor 文件夹：
+2. 准备本插件 **0.2.4 或更新版本**的 Windows x64 压缩包，解压到一个普通文件夹。发布包位于[本插件发布页](https://github.com/aoang-git/TrafficMonitorAgentStatus/releases)。
+3. 退出 TrafficMonitor（升级时同时停止后台 AgentStatusBridge），将发布包中的 **AgentStatus.dll** 和完整的 **AgentStatus 文件夹**复制到 TrafficMonitor 的 `plugins` 目录。
+4. 启动 TrafficMonitor，在任务栏显示项目中勾选 **Agent 状态**，打开插件设置，点击 **发现服务并连接**。首次成功连接时会同时登记 Bridge 的当前用户登录自启动项，后续重启无需再次点击。
 
-   ```powershell
-   .\Install-PluginFiles.ps1 -TrafficMonitorDirectory 'D:\Tools\TrafficMonitor'
-   ```
+Runtime 已经装过并在运行的话，第一步可以跳过。插件安装包自带运行依赖，不用再单独安装 .NET。目录移动后重新点击一次“发现服务并连接”，即可更新自启动路径。如果提示自动连接设置失败，需要检查启动项权限；Windows 启动应用中也需保持该启动项启用。
 
-4. 启动 TrafficMonitor，在任务栏的显示项目里勾选 **Agent 状态**。如果安装前 TrafficMonitor 已经开着，安装脚本会将它重新启动。
+也可以用 PowerShell 7 执行发布包中的安装脚本，自动完成文件部署和自启动注册；升级旧版本时它还会先备份旧文件和配置：
 
-Runtime 已经装过并在运行的话，第一步可以跳过。插件安装包自带运行依赖，不用再单独安装 .NET。安装脚本会先备份旧文件和配置，再更新插件；已有的显示设置会保留。
+```powershell
+.\Install-PluginFiles.ps1 -TrafficMonitorDirectory 'D:\Tools\TrafficMonitor'
+```
 
 ## 平时怎么用
 

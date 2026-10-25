@@ -116,7 +116,7 @@ public:
         case TMI_DESCRIPTION: return L"订阅 Agent Status Runtime 显示本机 Agent 状态";
         case TMI_AUTHOR: return L"TrafficMonitorAgentStatus";
         case TMI_COPYRIGHT: return L"2026 TrafficMonitorAgentStatus contributors";
-        case TMI_VERSION: return L"0.2.3";
+        case TMI_VERSION: return L"0.2.4";
         case TMI_URL: return L"";
         default: return L"";
         }

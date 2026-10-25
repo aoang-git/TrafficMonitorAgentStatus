@@ -3,6 +3,16 @@ using System.Text;
 using System.Text.Json;
 using System.Diagnostics;
 
+// A renamed test apphost emulates the installed bridge for the login roundtrip.
+// Production Bridge binaries do not accept this test-only Runtime override.
+if (args.SequenceEqual(new[] { "serve" }) && Environment.GetEnvironmentVariable("TMAS_STARTUP_TEST_RUNTIME") is { Length: > 0 } startupRuntime)
+{
+    using var service = new RuntimeService(startupRuntime, Path.Combine(startupRuntime, "not-installed.exe"));
+    using var lifetime = new CancellationTokenSource();
+    await new Server(service).Run(lifetime.Token);
+    return;
+}
+
 int passed = 0;
 void Check(bool value, string name) { if (!value) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
 void Throws(Action action, string name) { try { action(); } catch (Exception e) when (e is InvalidDataException or IOException or JsonException) { Check(true, name); return; } throw new Exception("FAIL: " + name); }
@@ -111,6 +121,7 @@ try
     ReportedStateTests.Run(root, Check);
     await RuntimeServiceTests.Run(root, Check);
     IpcSecurityTests.Run(Check);
+    await BridgeStartupTests.Run(root, Check);
     SettingsLayoutTests.Run(Check);
     await RuntimeIntegration.Run(root, Check, args);
     Console.WriteLine($"PASS: {passed} checks");
