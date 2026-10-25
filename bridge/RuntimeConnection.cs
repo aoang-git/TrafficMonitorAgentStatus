@@ -15,7 +15,7 @@ public sealed class RuntimeConnection(Uri endpoint, string token, string epoch =
     public static async Task<RuntimeConnection> LoadAsync(string directory, CancellationToken cancellationToken)
     {
         var path = Path.Combine(directory, "private", "connection.json");
-        if (!File.Exists(path)) throw new FileNotFoundException("未找到连接文件。请先在独立终端启动 Runtime，或选择正确的数据目录。");
+        if (!File.Exists(path)) throw new FileNotFoundException("未找到 Runtime 服务连接信息。");
         var info = new FileInfo(path);
         if (info.Length > 16 * 1024) throw new InvalidDataException("连接文件过大。");
         return Parse(await File.ReadAllTextAsync(path, cancellationToken));
@@ -29,7 +29,7 @@ public sealed class RuntimeConnection(Uri endpoint, string token, string epoch =
             var root = document.RootElement;
             if (root.ValueKind != JsonValueKind.Object) throw new InvalidDataException("连接文件字段类型不正确。");
             if (!root.TryGetProperty("epoch", out var epochField) || !root.TryGetProperty("pid", out var pidField))
-                throw new InvalidDataException("连接文件缺少新版服务实例标识；请重新选择已安装服务的数据目录，或用新版 Runtime 启动此目录。");
+                throw new InvalidDataException("连接信息缺少新版服务实例标识，请更新或启动 Runtime 服务。");
             var url = root.GetProperty("url").GetString();
             var token = root.GetProperty("token").GetString();
             var epoch = epochField.GetString();
@@ -49,7 +49,7 @@ public sealed class RuntimeConnection(Uri endpoint, string token, string epoch =
         }
         catch (Exception error) when (error is KeyNotFoundException or InvalidOperationException or FormatException)
         {
-            throw new InvalidDataException("连接文件字段缺失或类型不正确；请选择新版 Runtime 的数据目录。");
+            throw new InvalidDataException("连接信息字段缺失或类型不正确，请更新 Runtime 服务。");
         }
     }
 }

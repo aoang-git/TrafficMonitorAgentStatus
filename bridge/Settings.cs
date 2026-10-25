@@ -4,10 +4,8 @@ namespace AgentStatus;
 public sealed record AgentStatusSettings
 {
     public int ConfigVersion { get; init; } = 2;
-    public string RuntimeDirectory { get; init; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "AgentStatusRuntime");
     public bool ShowSource { get; init; } = true;
     public bool ShowReportedStates { get; init; } = true;
-    public int ReportedStateLeaseMs { get; init; } = 60000;
     public int CompletionToastMs { get; init; } = 5000;
     public int NoticeToastMs { get; init; } = 15000;
     public int MaxWorkingMs { get; init; } = 5 * 60 * 1000;
@@ -39,9 +37,8 @@ public sealed record AgentStatusSettings
             var clean = new string((DisplayTexts?.GetValueOrDefault(display.Key) ?? "").Where(c => !char.IsControl(c)).Take(32).ToArray()).Trim();
             texts[display.Key] = clean.Length > 0 ? clean : display.DefaultText;
         }
-        string directory = string.IsNullOrWhiteSpace(RuntimeDirectory) ? Defaults.RuntimeDirectory : Path.GetFullPath(RuntimeDirectory.Trim());
-        return this with { ConfigVersion = 2, RuntimeDirectory = directory, CompletionToastMs = Math.Clamp(CompletionToastMs, 0, 60000),
-            ReportedStateLeaseMs = Math.Clamp(ReportedStateLeaseMs, 1000, 3600000), NoticeToastMs = Math.Clamp(NoticeToastMs, 1000, 600000), MaxWorkingMs = Math.Clamp(MaxWorkingMs, 30000, 7200000),
+        return this with { ConfigVersion = 2, CompletionToastMs = Math.Clamp(CompletionToastMs, 0, 60000),
+            NoticeToastMs = Math.Clamp(NoticeToastMs, 1000, 600000), MaxWorkingMs = Math.Clamp(MaxWorkingMs, 30000, 7200000),
             MaxWaitingMs = Math.Clamp(MaxWaitingMs, 60000, 86400000), EnabledSources = enabled, DisplayTexts = texts };
     }
 }

@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.IO.MemoryMappedFiles;
 using System.IO.Pipes;
 using System.Security.Principal;
+using System.Security.AccessControl;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -81,13 +83,61 @@ public static class Wire
     }
 }
 
+static class UserPipe
+{
+    static readonly object gate = new();
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern uint SetSecurityInfo(IntPtr handle, int objectType, uint securityInformation,
+        IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+
+    public static NamedPipeServerStream Create() => Create(Names.Pipe,
+        new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator));
+
+    internal static NamedPipeServerStream Create(string name, bool elevated)
+    {
+        lock (gate)
+        {
+            var security = new PipeSecurity();
+            security.SetSecurityDescriptorSddlForm($"D:P(D;;FA;;;NU)(A;;FA;;;{WindowsIdentity.GetCurrent().User!.Value})");
+            NamedPipeServerStream Open(PipeAccessRights access = 0) => NamedPipeServerStreamAcl.Create(name,
+                PipeDirection.InOut, 8, PipeTransmissionMode.Byte, PipeOptions.Asynchronous, 0, 0,
+                security, additionalAccessRights: access);
+            if (!elevated) return Open();
+            NamedPipeServerStream pipe;
+            // WRITE_OWNER shares CreateNamedPipe's FIRST_PIPE_INSTANCE bit. Set the
+            // common pipe object's label once, then open ordinary additional instances.
+            try { pipe = Open(PipeAccessRights.TakeOwnership); }
+            catch (UnauthorizedAccessException) { return Open(); }
+            try { SetMediumIntegrity(pipe); return pipe; }
+            catch { pipe.Dispose(); throw; }
+        }
+    }
+    static unsafe void SetMediumIntegrity(NamedPipeServerStream pipe)
+    {
+        // LABEL_SECURITY_INFORMATION needs WRITE_OWNER, not audit privileges.
+        // PipeSecurity's audit ACL normalization drops mandatory-label ACEs.
+        var label = new RawSecurityDescriptor("S:(ML;;NW;;;ME)");
+        byte[] descriptor = new byte[label.BinaryLength];
+        label.GetBinaryForm(descriptor, 0);
+        fixed (byte* bytes = descriptor)
+        {
+            int offset = BitConverter.ToInt32(descriptor, 12);
+            uint error = SetSecurityInfo(pipe.SafePipeHandle.DangerousGetHandle(), 6, 0x10,
+                IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, (IntPtr)(bytes + offset));
+            if (error != 0) throw new System.ComponentModel.Win32Exception((int)error);
+        }
+    }
+
+}
+
 public sealed class Server
 {
     readonly SettingsStore settings = new();
     readonly StateStore state;
+    readonly RuntimeMonitor monitor;
     CancellationTokenSource? stop;
 
-    public Server() { state = new StateStore(settings: settings); }
+    public Server(RuntimeService? service = null) { state = new StateStore(settings: settings); monitor = new RuntimeMonitor(state, service); }
 
     public async Task Run(CancellationToken cancellationToken)
     {
@@ -95,7 +145,7 @@ public sealed class Server
         stop = lifetime;
         var ct = lifetime.Token;
         using var snapshot = new SnapshotMap();
-        var runtimeTask = new RuntimeMonitor(state, settings).Run(ct);
+        var runtimeTask = monitor.Run(ct);
         // A fixed pool bounds concurrent connections and slow clients.
         var workers = Enumerable.Range(0, 8).Select(_ => Listen(ct)).ToArray();
         try
@@ -116,7 +166,9 @@ public sealed class Server
     {
         while (!ct.IsCancellationRequested)
         {
-            using var pipe = new NamedPipeServerStream(Names.Pipe, PipeDirection.InOut, 8, PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            // Explicit user ACL and medium integrity allow the same user to open details
+            // from either an elevated TrafficMonitor or an ordinary desktop process.
+            using var pipe = UserPipe.Create();
             try
             {
                 await pipe.WaitForConnectionAsync(ct);
@@ -126,8 +178,11 @@ public sealed class Server
                 object result;
                 switch (op)
                 {
-                    case "ping": result = new { ok = true, version = "0.2.2", pid = Environment.ProcessId }; break;
+                    case "ping": result = new { ok = true, version = "0.2.3", pid = Environment.ProcessId }; break;
                     case "snapshot": result = state.GetSnapshot(); break;
+                    case "connect":
+                        if (!state.GetSnapshot().Connected) monitor.Reconnect();
+                        result = new { ok = true }; break;
                     case "ack": result = new { ok = state.Acknowledge(root.GetProperty("key").GetString() ?? "") }; break;
                     case "stop": result = new { ok = true }; break;
                     default: result = new { ok = false, error = "unknown_operation" }; break;

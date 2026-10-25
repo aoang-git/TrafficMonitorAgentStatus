@@ -1,6 +1,10 @@
-param([string]$PackageDirectory = (Join-Path $PSScriptRoot '..\dist\TrafficMonitorAgentStatus-v0.2.2-win-x64'))
+param([string]$PackageDirectory)
 $ErrorActionPreference = 'Stop'
 $workspace = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+if (!$PackageDirectory) {
+  [xml]$project = Get-Content -Raw -LiteralPath (Join-Path $workspace 'bridge\AgentStatusBridge.csproj')
+  $PackageDirectory = Join-Path $workspace ('dist\TrafficMonitorAgentStatus-v'+$project.Project.PropertyGroup.Version+'-win-x64')
+}
 $fixture = Join-Path $workspace ('build\install-test-'+[guid]::NewGuid().ToString('N'))
 $hostDir = Join-Path $fixture 'TrafficMonitor'
 $userDir = Join-Path $fixture 'user'
@@ -52,9 +56,14 @@ try {
   $config = [IO.File]::ReadAllText((Join-Path $dataDir 'config.json')) | ConvertFrom-Json -AsHashtable
   Check ($config.configVersion -eq 2 -and $config.showSource -and !$config.Contains('codexPollIntervalMs')) 'legacy settings replaced with version 2 defaults'
   Check ($config.displayTexts.Count -eq 6 -and $config.displayTexts.taskInterrupted -eq '任务中断' -and !$config.displayTexts.Contains('turnCompleted')) 'installed settings contain exactly six merged states'
-  Check ($config.showReportedStates -eq $true -and $config.reportedStateLeaseMs -eq 60000) 'fresh install supplies reported toggle and bounded lease defaults'
+  Check ($config.showReportedStates -eq $true -and !$config.Contains('reportedStateLeaseMs') -and !$config.Contains('runtimeDirectory')) 'fresh install enables reports without lease or manual directory'
   $config.showReportedStates=$false
   $config.reportedStateLeaseMs=15000
+  $config.runtimeDirectory="old-directory"
+  $config.completionToastMs=7000
+  $config.noticeToastMs=19000
+  $config.maxWorkingMs=600000
+  $config.maxWaitingMs=2400000
   $config.showSource=$false
   $config.displayTexts.taskCompleted='完成啦'
   $config.displayTexts.turnCompleted='旧完成'
@@ -64,13 +73,13 @@ try {
   $config = [IO.File]::ReadAllText((Join-Path $dataDir 'config.json')) | ConvertFrom-Json
   Check (!$config.showSource -and (Get-ChildItem -LiteralPath $agentDir -Filter '*backup*').Count -eq 0) 'repeat install preserves new settings and stays clean'
   Check ($config.displayTexts.taskCompleted -eq '完成啦' -and $config.displayTexts.taskInterrupted -eq '任务中断' -and @($config.displayTexts.PSObject.Properties).Count -eq 6) 'repeat install prunes retired state keys and preserves surviving custom text'
-  Check (!$config.showReportedStates -and $config.reportedStateLeaseMs -eq 15000) 'repeat install preserves reported display and lease settings'
+  Check (!$config.showReportedStates -and !$config.PSObject.Properties['reportedStateLeaseMs'] -and !$config.PSObject.Properties['runtimeDirectory'] -and $config.completionToastMs -eq 7000 -and $config.noticeToastMs -eq 19000 -and $config.maxWorkingMs -eq 600000 -and $config.maxWaitingMs -eq 2400000) 'upgrade removes obsolete discovery and lease settings while preserving four timings'
   $previousConfig = [IO.File]::ReadAllText((Join-Path $dataDir 'config.json')) | ConvertFrom-Json -AsHashtable
-  $previousConfig.Remove('showReportedStates'); $previousConfig.Remove('reportedStateLeaseMs')
+  $previousConfig.Remove('showReportedStates')
   [IO.File]::WriteAllText((Join-Path $dataDir 'config.json'),($previousConfig | ConvertTo-Json -Depth 10))
   & (Join-Path $workspace 'tools\Install-PluginFiles.ps1') @params
   $upgradedConfig = [IO.File]::ReadAllText((Join-Path $dataDir 'config.json')) | ConvertFrom-Json
-  Check ($upgradedConfig.showReportedStates -and $upgradedConfig.reportedStateLeaseMs -eq 60000 -and !$upgradedConfig.showSource -and $upgradedConfig.displayTexts.taskCompleted -eq '完成啦') 'previous version-2 install gains new defaults without resetting display preferences'
+  Check ($upgradedConfig.showReportedStates -and !$upgradedConfig.PSObject.Properties['reportedStateLeaseMs'] -and !$upgradedConfig.showSource -and $upgradedConfig.displayTexts.taskCompleted -eq '完成啦') 'previous version-2 install gains report toggle without restoring lease or resetting display preferences'
   Check ((Get-FileHash -LiteralPath (Join-Path $plugins 'AgentStatus.dll')).Hash -eq (Get-FileHash -LiteralPath (Join-Path $PackageDirectory 'AgentStatus.dll')).Hash) 'installed DLL matches release'
   Check (@(Get-ChildItem -LiteralPath $PackageDirectory -Recurse -File | Where-Object {$_.Name -match 'AgentStatusEmit|JsonHook|Install-AgentHooks|Configure-ClaudeHook'}).Count -eq 0) 'release excludes retired emitters and adapters'
 } finally {

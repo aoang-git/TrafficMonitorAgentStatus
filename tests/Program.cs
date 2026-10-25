@@ -109,6 +109,9 @@ try
     badDiscovery = false; try { await RuntimeConnection.LoadAsync(discovery, default); } catch (InvalidDataException) { badDiscovery = true; }
     Check(badDiscovery, "nonloopback discovery rejected");
     ReportedStateTests.Run(root, Check);
+    await RuntimeServiceTests.Run(root, Check);
+    IpcSecurityTests.Run(Check);
+    SettingsLayoutTests.Run(Check);
     await RuntimeIntegration.Run(root, Check, args);
     Console.WriteLine($"PASS: {passed} checks");
 }

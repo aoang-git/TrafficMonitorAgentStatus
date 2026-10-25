@@ -42,16 +42,18 @@ internal static class Program
 
     public static async Task EnsureStarted()
     {
-        try { await Wire.Request(new { op = "ping" }, 100); return; } catch { }
+        try { await Wire.Request(new { op = "ping" }, 500); return; }
+        catch (Exception error) when (error is OperationCanceledException or IOException or TimeoutException) { }
         string path = Environment.ProcessPath ?? throw new InvalidOperationException("No executable path");
         Process.Start(new ProcessStartInfo(path, "serve") { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = AppContext.BaseDirectory });
         // The caller may return before readiness; this loop has a strict cold-start bound.
         var timer = Stopwatch.StartNew();
-        while (timer.ElapsedMilliseconds < 1500)
+        while (timer.ElapsedMilliseconds < 5000)
         {
-            try { await Wire.Request(new { op = "ping" }, 100); return; } catch { await Task.Delay(30); }
+            try { await Wire.Request(new { op = "ping" }, 300); return; }
+            catch (Exception error) when (error is OperationCanceledException or IOException or TimeoutException) { await Task.Delay(50); }
         }
-        throw new TimeoutException("Collector startup timeout");
+        throw new TimeoutException("后台桥接启动超时");
     }
 
 }

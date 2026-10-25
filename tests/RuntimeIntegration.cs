@@ -12,9 +12,10 @@ static class RuntimeIntegration
     public static async Task Run(string root, Action<bool, string> check, string[] args)
     {
         await using var fake = new FakeRuntime(Path.Combine(root, "mock-runtime"));
-        var settings = new SettingsStore(); settings.Save(AgentStatusSettings.Defaults with { RuntimeDirectory = fake.Directory });
+        var settings = new SettingsStore(); settings.Save(AgentStatusSettings.Defaults);
+        using var service = new RuntimeService(fake.Directory, Path.Combine(root, "not-installed.exe"));
         using var lifetime = new CancellationTokenSource();
-        var server = new Server().Run(lifetime.Token);
+        var server = new Server(service).Run(lifetime.Token);
         try
         {
             async Task<Snapshot> Snapshot() => (await Wire.Request(new { op = "snapshot" }, 1500)).Deserialize<Snapshot>(JsonWire.Options)!;
@@ -45,10 +46,10 @@ static class RuntimeIntegration
             await Await(s => s.Text == "Codex:任务完成" && s.Sessions.All(v => v.Origin == "external"), "file tool toggle cannot hide report through real SSE");
             settings.Save(settings.Current with { ShowReportedStates = false });
             await Await(s => s.Text == "" && s.Sessions.Count == 0, "reported checkbox hides result immediately");
-            settings.Save(settings.Current with { ShowReportedStates = true, ReportedStateLeaseMs = 1000 });
-            await Await(s => s.Text == "" && s.Sessions.Count == 0, "reported lease expiry removes real SSE result without unknown");
-            settings.Save(settings.Current with { EnabledSources = new(), ReportedStateLeaseMs = 60000 });
-            await Await(s => s.Text == "Codex:工作中" && s.Sessions.All(v => v.Origin == "file"), "expired report falls back to collected SSE session and does not revive after lease increase");
+            settings.Save(settings.Current with { ShowReportedStates = true, CompletionToastMs = 1000 });
+            await Await(s => s.Text == "" && s.Sessions.Count == 0, "reported completion expiry removes real SSE result without unknown");
+            settings.Save(settings.Current with { EnabledSources = new(), CompletionToastMs = 5000 });
+            await Await(s => s.Text == "Codex:工作中" && s.Sessions.All(v => v.Origin == "file"), "expired report falls back to collected SSE session and does not revive after duration increase");
             fake.Drop(); await Await(s => !s.Connected && s.Sessions.Count == 0, "disconnect clears task state");
             await Await(s => s.Connected && s.Text == "", "reconnect never restores prior task");
             await fake.Emit("tool_activity", "second"); await Await(s => s.Text == "Codex:调用工具", "new activity after reconnect");
@@ -66,9 +67,15 @@ static class RuntimeIntegration
             await Await(s => !s.Connected, "discovery info epoch mismatch rejected");
             fake.InfoEpochOverride = null; await Await(s => s.Connected, "corrected instance rediscovers", 15000);
             await using var next = new FakeRuntime(Path.Combine(root, "next-runtime"));
-            settings.Save(settings.Current with { RuntimeDirectory = next.Directory });
+            fake.Drop(); await Await(s => !s.Connected, "old instance disconnects before rediscovery");
+            File.Copy(Path.Combine(next.Directory, "private", "connection.json"), Path.Combine(fake.Directory, "private", "connection.json"), true);
+            var reconnect = await Wire.Request(new { op = "connect" });
+            check(reconnect.GetProperty("ok").GetBoolean(), "discover-and-connect IPC accepted");
             await next.WaitFor(() => next.LastSubscribedEpoch != "");
-            await next.Emit("working"); await Await(s => s.Text == "Codex:工作中", "runtime directory changes reconnect subscription");
+            await next.Emit("working"); await Await(s => s.Text == "Codex:工作中", "manual discovery reconnects using newly published service connection");
+            var accepted = (await Snapshot()).Accepted;
+            await Wire.Request(new { op = "connect" });
+            check((await Snapshot()).Text == "Codex:工作中" && (await Snapshot()).Accepted == accepted, "connect while healthy retains current display");
             check(fake.Routes.All(p => p is "/v3/info" or "/v3/events"), "client never reads recent history or writes ingest");
             var stop = await Wire.Request(new { op = "stop" }); check(stop.GetProperty("ok").GetBoolean(), "bridge shutdown command");
             await server.WaitAsync(TimeSpan.FromSeconds(5));
@@ -90,6 +97,7 @@ sealed class FakeRuntime : IAsyncDisposable
     public string? InfoEpochOverride;
     public long Revision;
     public int Unauthorized, InfoRequests;
+    public int InfoSchema = 3;
     public ConcurrentBag<string> Routes = [];
     public FakeRuntime(string directory)
     {
@@ -123,7 +131,7 @@ sealed class FakeRuntime : IAsyncDisposable
                 if (route == "/v3/info")
                 {
                     Interlocked.Increment(ref InfoRequests);
-                    string body = JsonSerializer.Serialize(new { version = "0.3.0", schema = 3, mode = "facts", epoch = InfoEpochOverride ?? Epoch });
+                    string body = JsonSerializer.Serialize(new { version = "0.3.0", schema = InfoSchema, mode = "facts", epoch = InfoEpochOverride ?? Epoch });
                     await Write(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: " + Encoding.UTF8.GetByteCount(body) + "\r\nConnection: close\r\n\r\n" + body); return;
                 }
                 if (route != "/v3/events") throw new Exception("Unexpected route");

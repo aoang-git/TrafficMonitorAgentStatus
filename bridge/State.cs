@@ -54,10 +54,10 @@ public sealed class StateStore
         public DateTimeOffset UpdatedAt;
         public bool Incomplete, Terminal, ExplicitEnd;
     }
-    sealed record ReportedSession(string Key, string Agent, string Id, string? Operation, string State,
-        long Received, long Revision, DateTimeOffset UpdatedAt, long Deadline);
+    sealed record ReportedSession(string Key, string Agent, string Id, string? Operation, string State, string DeclaredState,
+        long Since, long Revision, DateTimeOffset UpdatedAt, long Deadline, bool Hidden = false);
     readonly Dictionary<string, ReportedSession> reported = [];
-    int appliedReportedLeaseMs;
+    AgentStatusSettings appliedReportedSettings;
     readonly object gate = new();
     readonly Dictionary<string, Session> sessions = [];
     readonly HashSet<string> knownSources = new(StringComparer.OrdinalIgnoreCase);
@@ -73,7 +73,7 @@ public sealed class StateStore
         this.clock = clock ?? (() => Environment.TickCount64);
         this.settings = settings ?? new SettingsStore();
         this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow);
-        appliedReportedLeaseMs = this.settings.Current.ReportedStateLeaseMs;
+        appliedReportedSettings = this.settings.Current;
     }
     public void Reset(string status, bool isConnected = false, long revision = 0)
     {
@@ -96,19 +96,35 @@ public sealed class StateStore
         if (s.Candidate is { } candidate && now - candidate >= 3000) Finish(s, "taskCompleted", candidate + 3000, false);
         else if (now - s.Progress >= (s.State == "waiting" ? config.MaxWaitingMs : config.MaxWorkingMs)) Finish(s, "unknown", now, false);
     }
+    static int ReportedDuration(string state, AgentStatusSettings config) => state switch
+    {
+        "waiting" => config.MaxWaitingMs,
+        "working" or "tool" => config.MaxWorkingMs,
+        "taskCompleted" => config.CompletionToastMs,
+        _ => config.NoticeToastMs
+    };
+    static ReportedSession AdvanceReport(ReportedSession entry, long now, AgentStatusSettings config)
+    {
+        if (entry.Hidden || now < entry.Deadline) return entry;
+        if (Active(entry.State))
+            entry = entry with { State = "unknown", Since = entry.Deadline, Deadline = entry.Deadline + config.NoticeToastMs };
+        return now >= entry.Deadline ? entry with { Hidden = true } : entry;
+    }
     void ExpireReported(long now, AgentStatusSettings config)
     {
-        // Expire against the previous deadline before extending a changed lease.
-        // A later settings edit must never resurrect a report whose lease already elapsed.
-        foreach (var entry in reported.Values.Where(r => now >= r.Deadline).ToArray()) reported.Remove(entry.Key);
-        if (appliedReportedLeaseMs == config.ReportedStateLeaseMs) return;
         foreach (var entry in reported.Values.ToArray())
         {
-            long deadline = entry.Received + config.ReportedStateLeaseMs;
-            if (now >= deadline) reported.Remove(entry.Key);
-            else reported[entry.Key] = entry with { Deadline = deadline };
+            // Apply old deadlines first. Editing settings cannot revive an expired result
+            // or undo an inactivity timeout, even if no snapshot was read in between.
+            var current = AdvanceReport(entry, now, appliedReportedSettings);
+            if (!current.Hidden)
+            {
+                current = current with { Deadline = current.Since + ReportedDuration(current.State, config) };
+                current = AdvanceReport(current, now, config);
+            }
+            reported[entry.Key] = current;
         }
-        appliedReportedLeaseMs = config.ReportedStateLeaseMs;
+        appliedReportedSettings = config;
     }
     bool ApplyReported(RuntimeFact fact, long now, AgentStatusSettings config)
     {
@@ -122,12 +138,18 @@ public sealed class StateStore
         { rejected++; return false; }
         var key = string.Join('\u001f', "external", fact.SourceId, fact.Agent, fact.SessionNamespace, fact.SessionId);
         if (state == "idle") reported.Remove(key);
+        else if (!Active(state) && reported.TryGetValue(key, out var previous)
+            && previous.Operation == fact.OperationId && previous.DeclaredState == state)
+        {
+            // Keep a bounded hidden entry after expiry to suppress repeated results.
+            accepted++; return true;
+        }
         else
         {
             if (!reported.ContainsKey(key) && reported.Count >= MaxSessions)
                 reported.Remove(reported.Values.MinBy(r => r.Revision)!.Key);
-            reported[key] = new(key, fact.Agent, fact.SessionId, fact.OperationId, state, now, fact.Id,
-                utcNow(), now + config.ReportedStateLeaseMs);
+            reported[key] = new(key, fact.Agent, fact.SessionId, fact.OperationId, state, state, now, fact.Id,
+                utcNow(), now + ReportedDuration(state, config));
         }
         accepted++; return true;
     }
@@ -234,7 +256,7 @@ public sealed class StateStore
         lock (gate)
         {
             ExpireReported(clock(), settings.Current);
-            if (reported.Remove(key)) return true;
+            if (reported.TryGetValue(key, out var report)) { reported[key] = report with { Hidden = true }; return true; }
             if (!sessions.TryGetValue(key, out var s)) return false;
             Finish(s, "unknown", clock(), false); return true;
         }
@@ -248,7 +270,7 @@ public sealed class StateStore
             ExpireReported(now, config);
             foreach (var s in sessions.Values) Tick(s, now, config);
             var shown = sessions.Values.Where(s => config.EnabledSources.GetValueOrDefault(s.Agent, true)).ToArray();
-            var reports = config.ShowReportedStates ? reported.Values.OrderByDescending(r => r.Revision).ToArray() : [];
+            var reports = config.ShowReportedStates ? reported.Values.Where(r => !r.Hidden).OrderByDescending(r => r.Revision).ToArray() : [];
             bool Visible(Session s) => Active(s.State) || s.State != "idle" && now - (s.Terminal ? s.TerminalAt : s.UnknownAt) < (Alert(s.State) ? config.NoticeToastMs : config.CompletionToastMs);
             var selected = shown.Where(Visible).OrderBy(s => s.State switch { "waiting" => 0, "tool" => 1, "working" => 2, "taskInterrupted" => 3, "unknown" => 4, "taskCompleted" => 5, _ => 6 }).ThenByDescending(s => s.Updated).FirstOrDefault();
             string Label(string state) => config.DisplayTexts.GetValueOrDefault(state, state);

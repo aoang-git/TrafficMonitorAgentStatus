@@ -33,56 +33,65 @@ public sealed class RuntimeSubscription(string epoch, StateStore state)
     }
 }
 
-public sealed class RuntimeMonitor(StateStore state, SettingsStore settings, RuntimeClient? client = null)
+public sealed class RuntimeMonitor(StateStore state, RuntimeService? service = null, RuntimeClient? client = null)
 {
+    readonly object gate = new();
+    CancellationTokenSource? attempt;
+    bool reconnectRequested;
+    bool connecting;
+    public void Reconnect()
+    {
+        lock (gate)
+        {
+            if (connecting) return;
+            reconnectRequested = true;
+            state.Reset("正在发现Runtime服务");
+            attempt?.Cancel();
+        }
+    }
     public async Task Run(CancellationToken ct)
     {
         using var ownedClient = client == null ? new RuntimeClient() : null;
         var http = client ?? ownedClient!;
+        using var ownedService = service == null ? new RuntimeService() : null;
+        var discovery = service ?? ownedService!;
         int attempts = 0;
         while (!ct.IsCancellationRequested)
         {
             using var connectionLifetime = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            string directory = settings.Current.RuntimeDirectory;
+            lock (gate)
+            {
+                attempt = connectionLifetime;
+                connecting = true;
+                if (reconnectRequested) { discovery.RetryStart(); attempts = 0; reconnectRequested = false; }
+                state.Reset("正在发现Runtime服务");
+            }
             try
             {
-                var connection = await RuntimeConnection.LoadAsync(directory, ct);
-                var info = await http.GetAsync<RuntimeInfo>(connection, "/v3/info", ct);
-                if (info.Schema != 3 || info.Mode != "facts" || info.Epoch != connection.Epoch)
-                    throw new InvalidDataException("Incompatible Runtime instance");
+                var connection = await discovery.Discover(connectionLifetime.Token);
                 var subscription = new RuntimeSubscription(connection.Epoch, state);
-                var stream = http.SubscribeAsync(connection, message =>
+                await http.SubscribeAsync(connection, message =>
                 {
                     subscription.Receive(message);
-                    if (message.Type == "ready") attempts = 0;
+                    if (message.Type == "ready") { attempts = 0; lock (gate) { connecting = false; } }
                     return Task.CompletedTask;
                 }, () => { }, connectionLifetime.Token);
-                try
-                {
-                    while (!stream.IsCompleted)
-                    {
-                        await Task.WhenAny(stream, Task.Delay(1000, ct));
-                        ct.ThrowIfCancellationRequested();
-                        if (settings.Current.RuntimeDirectory != directory) break;
-                    }
-                }
-                finally
-                {
-                    connectionLifetime.Cancel();
-                    try { await stream; } catch (OperationCanceledException) when (!ct.IsCancellationRequested) { }
-                }
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            { lock (gate) { attempt = null; connecting = false; } break; }
+            catch (OperationCanceledException) when (connectionLifetime.IsCancellationRequested) { }
             catch (Exception error) when (error is InvalidDataException or IOException or HttpRequestException or JsonException or InvalidOperationException or OperationCanceledException or TimeoutException or UnauthorizedAccessException)
             {
                 // Only exception types are recorded; HTTP URLs, tokens and bodies never enter diagnostics.
                 Diagnostics.Write("runtime", error.GetType().Name);
+                state.Reset(error is RuntimeServiceException ? error.Message : "Runtime 未连接 · 正在重连");
             }
-            state.Reset("Runtime 未连接 · 正在重连");
-            if (settings.Current.RuntimeDirectory != directory) { attempts = 0; continue; }
-            try { await Task.Delay(new[] { 1000, 2000, 5000, 10000 }[Math.Min(attempts++, 3)], ct); }
-            catch (OperationCanceledException) { break; }
+            lock (gate) { connecting = false; }
+            try { await Task.Delay(new[] { 1000, 2000, 5000, 10000 }[Math.Min(attempts++, 3)], connectionLifetime.Token); }
+            catch (OperationCanceledException) { }
+            finally { lock (gate) { attempt = null; } }
         }
+        lock (gate) { attempt = null; connecting = false; }
         state.Reset("显示桥接已停止");
     }
 }
