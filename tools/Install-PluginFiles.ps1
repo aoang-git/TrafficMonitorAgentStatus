@@ -85,8 +85,11 @@ try {
   [IO.File]::WriteAllText($configPath,($installedConfig | ConvertTo-Json -Depth 30),[Text.UTF8Encoding]::new($false))
   $bridgeExe = Join-Path $bridgeTarget 'AgentStatusBridge.exe'
   if (!$SkipStartup) {
-    if (!(Test-Path -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run')) { New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' | Out-Null }
-    New-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'TrafficMonitorAgentStatus' -PropertyType String -Value ('"'+$bridgeExe+'" serve') -Force | Out-Null
+    $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    if (Test-Path -LiteralPath $runKey) {
+      $legacy = (Get-ItemProperty -LiteralPath $runKey).TrafficMonitorAgentStatus
+      if ($legacy -match '^"[^"\r\n]*\\AgentStatusBridge\.exe" serve$') { Remove-ItemProperty -LiteralPath $runKey -Name TrafficMonitorAgentStatus }
+    }
   }
 } catch {
   if (Test-Path -LiteralPath (Join-Path $backup 'AgentStatus')) {
@@ -103,7 +106,6 @@ try {
   throw
 }
 if (!$SkipLaunch) {
-  Start-Process -FilePath $bridgeExe -ArgumentList 'serve' -WorkingDirectory $bridgeTarget -WindowStyle Hidden | Out-Null
   if ($hostProcesses.Count -gt 0) { Start-Process -FilePath $trafficExe -WorkingDirectory $target -WindowStyle Hidden | Out-Null }
 }
 Write-Output "Installed: $pluginTarget"

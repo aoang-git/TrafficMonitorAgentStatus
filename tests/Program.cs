@@ -5,11 +5,11 @@ using System.Diagnostics;
 
 // A renamed test apphost emulates the installed bridge for the login roundtrip.
 // Production Bridge binaries do not accept this test-only Runtime override.
-if (args.SequenceEqual(new[] { "serve" }) && Environment.GetEnvironmentVariable("TMAS_STARTUP_TEST_RUNTIME") is { Length: > 0 } startupRuntime)
+if (args.FirstOrDefault() == "serve" && Environment.GetEnvironmentVariable("TMAS_STARTUP_TEST_RUNTIME") is { Length: > 0 } startupRuntime)
 {
     using var service = new RuntimeService(startupRuntime, Path.Combine(startupRuntime, "not-installed.exe"));
-    using var lifetime = new CancellationTokenSource();
-    await new Server(service).Run(lifetime.Token);
+    using var host = HostLifetime.Parse(args);
+    await new Server(service).Run(host.Token);
     return;
 }
 
@@ -121,7 +121,8 @@ try
     ReportedStateTests.Run(root, Check);
     await RuntimeServiceTests.Run(root, Check);
     IpcSecurityTests.Run(Check);
-    await BridgeStartupTests.Run(root, Check);
+    BridgeStartupTests.Run(Check);
+    if (args.Length == 2 && args[0] == "--integration") await NativeLifecycleTests.Run(root, args[1], Check);
     SettingsLayoutTests.Run(Check);
     await RuntimeIntegration.Run(root, Check, args);
     Console.WriteLine($"PASS: {passed} checks");

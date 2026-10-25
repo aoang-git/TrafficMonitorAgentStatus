@@ -96,7 +96,7 @@ sealed class FakeRuntime : IAsyncDisposable
     public string Epoch = "fixture-epoch", Token = "fixture-read-token", LastSubscribedEpoch = "";
     public string? InfoEpochOverride;
     public long Revision;
-    public int Unauthorized, InfoRequests;
+    public int Unauthorized, InfoRequests, Subscriptions;
     public int InfoSchema = 3;
     public ConcurrentBag<string> Routes = [];
     public FakeRuntime(string directory)
@@ -136,6 +136,7 @@ sealed class FakeRuntime : IAsyncDisposable
                 }
                 if (route != "/v3/events") throw new Exception("Unexpected route");
                 var ownChannel = Channel.CreateUnbounded<string>(); channel = ownChannel; LastSubscribedEpoch = Epoch;
+                Interlocked.Increment(ref Subscriptions);
                 await Write(stream, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n" + Frame("ready", JsonSerializer.Serialize(new { schema = 3, epoch = Epoch, revision = Revision })));
                 await foreach (var frame in ownChannel.Reader.ReadAllAsync(lifetime.Token)) await Write(stream, frame);
             }

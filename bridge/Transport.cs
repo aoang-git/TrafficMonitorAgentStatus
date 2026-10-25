@@ -178,7 +178,7 @@ public sealed class Server
                 object result;
                 switch (op)
                 {
-                    case "ping": result = new { ok = true, version = "0.2.4", pid = Environment.ProcessId }; break;
+                    case "ping": result = new { ok = true, version = "0.2.5", pid = Environment.ProcessId }; break;
                     case "snapshot": result = state.GetSnapshot(); break;
                     case "connect":
                         if (!state.GetSnapshot().Connected) monitor.Reconnect();

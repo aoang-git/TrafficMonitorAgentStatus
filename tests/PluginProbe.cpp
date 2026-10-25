@@ -9,8 +9,42 @@
 #include "../plugin/PluginInterface.h"
 #pragma warning(pop)
 
+std::string Utf8(const std::wstring& text) {
+    if (text.empty()) return "";
+    int bytes = WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0, nullptr, nullptr);
+    std::string result(bytes, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), bytes, nullptr, nullptr);
+    return result;
+}
+
+int Lifecycle(const wchar_t* path) {
+    HMODULE dll = nullptr; ITMPlugin* plugin = nullptr;
+    auto load = [&]() {
+        dll = LoadLibraryW(path); if (!dll) return false;
+        auto factory = reinterpret_cast<ITMPlugin*(*)()>(GetProcAddress(dll, "TMPluginGetInstance"));
+        if (!factory) return false;
+        plugin = factory(); return plugin != nullptr;
+    };
+    if (!load()) return 10;
+    std::cout << "LOADED" << std::endl;
+    for (std::string command; std::getline(std::cin, command);) {
+        if (command == "poll" && plugin) {
+            plugin->DataRequired(); std::cout << "value=" << Utf8(plugin->GetItem(0)->GetItemValueText()) << std::endl;
+        } else if (command == "unload" && dll) {
+            FreeLibrary(dll); dll = nullptr; plugin = nullptr; std::cout << "UNLOADED" << std::endl;
+        } else if (command == "load" && !dll) {
+            if (!load()) return 11;
+            std::cout << "LOADED" << std::endl;
+        } else if (command == "exit") break;
+        else return 12;
+    }
+    if (dll) FreeLibrary(dll);
+    return 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
     const wchar_t* path = argc > 1 ? argv[1] : L"AgentStatus.dll";
+    if (argc > 2 && std::wstring(argv[2]) == L"--lifecycle") return Lifecycle(path);
     int cycles = argc > 2 ? _wtoi(argv[2]) : 1;
     for (int i = 0; i < cycles; ++i) {
         auto dll = LoadLibraryW(path); if (!dll) { std::cerr << "LoadLibrary failed: " << GetLastError(); return 1; }

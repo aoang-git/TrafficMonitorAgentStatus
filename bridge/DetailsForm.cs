@@ -102,9 +102,7 @@ public sealed class DetailsForm : Form
                 status.Text = snapshot.RuntimeStatus;
                 if (snapshot.Connected)
                 {
-                    try { BridgeStartup.Enable(); status.Text = "Runtime 已连接，已设置登录后自动连接"; }
-                    catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
-                    { status.Text = "Runtime 已连接，但设置自动连接失败，请检查启动项权限"; }
+                    status.Text = "Runtime 已连接，随 TrafficMonitor 自动连接";
                     await RefreshState(); return;
                 }
                 if (snapshot.RuntimeStatus.StartsWith("未发现") || snapshot.RuntimeStatus.StartsWith("Runtime 服务")) return;

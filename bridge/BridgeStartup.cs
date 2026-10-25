@@ -6,20 +6,19 @@ internal static class BridgeStartup
 {
     internal const string ValueName = "TrafficMonitorAgentStatus";
 
-    public static void Enable()
+    public static void RemoveLegacy()
     {
-        using var run = Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true)
-            ?? throw new IOException("无法打开当前用户启动项");
-        Register(run, Path.Combine(AppContext.BaseDirectory, "AgentStatusBridge.exe"));
+        using var run = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
+        if (run != null) RemoveLegacy(run);
     }
 
-    internal static void Register(RegistryKey run, string executable)
+    internal static bool RemoveLegacy(RegistryKey run)
     {
-        string path = Path.GetFullPath(executable);
-        if (!File.Exists(path)) throw new FileNotFoundException("未找到后台桥接程序");
-        string command = "\"" + path + "\" serve";
-        if (run.GetValue(ValueName) is string current && string.Equals(current, command, StringComparison.OrdinalIgnoreCase)
-            && run.GetValueKind(ValueName) == RegistryValueKind.String) return;
-        run.SetValue(ValueName, command, RegistryValueKind.String);
+        if (run.GetValue(ValueName) is not string command) return false;
+        var match = System.Text.RegularExpressions.Regex.Match(command, "^\"([^\"\\r\\n]+)\" serve$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!match.Success || !Path.IsPathFullyQualified(match.Groups[1].Value)
+            || !string.Equals(Path.GetFileName(match.Groups[1].Value), "AgentStatusBridge.exe", StringComparison.OrdinalIgnoreCase)) return false;
+        run.DeleteValue(ValueName, false);
+        return true;
     }
 }

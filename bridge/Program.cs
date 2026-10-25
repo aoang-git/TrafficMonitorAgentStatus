@@ -11,13 +11,18 @@ internal static class Program
         string command = args.FirstOrDefault() ?? "details";
         try
         {
+            try { BridgeStartup.RemoveLegacy(); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.Security.SecurityException)
+            { Diagnostics.Write("legacy-startup", error.GetType().Name); }
             if (command == "serve")
             {
+                // A previous login startup entry may still invoke the old bare command.
+                // It must not leave an unowned background process running.
+                if (args.Length == 1) return 0;
+                using var host = HostLifetime.Parse(args);
                 using var singleton = new Mutex(true, Names.Lock, out bool created);
                 if (!created) return 0;
-                using var cts = new CancellationTokenSource();
-                Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
-                new Server().Run(cts.Token).GetAwaiter().GetResult();
+                new Server().Run(host.Token).GetAwaiter().GetResult();
                 return 0;
             }
             if (command == "details")
@@ -44,16 +49,15 @@ internal static class Program
     {
         try { await Wire.Request(new { op = "ping" }, 500); return; }
         catch (Exception error) when (error is OperationCanceledException or IOException or TimeoutException) { }
-        string path = Environment.ProcessPath ?? throw new InvalidOperationException("No executable path");
-        Process.Start(new ProcessStartInfo(path, "serve") { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = AppContext.BaseDirectory });
-        // The caller may return before readiness; this loop has a strict cold-start bound.
+        // The DLL starts and supervises the bridge. Details must never create an
+        // independent process which could keep files locked after the host exits.
         var timer = Stopwatch.StartNew();
-        while (timer.ElapsedMilliseconds < 5000)
+        while (timer.ElapsedMilliseconds < 10000)
         {
             try { await Wire.Request(new { op = "ping" }, 300); return; }
             catch (Exception error) when (error is OperationCanceledException or IOException or TimeoutException) { await Task.Delay(50); }
         }
-        throw new TimeoutException("后台桥接启动超时");
+        throw new TimeoutException("请启动 TrafficMonitor 并启用 Agent 状态插件");
     }
 
 }
