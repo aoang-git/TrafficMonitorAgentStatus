@@ -58,7 +58,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: ./tests/Installation.ps1 -PackageDirectory "dist/TrafficMonitorAgentStatus-v$env:VERSION-win-x64"
       - name: Test release publishing without network writes
-        run: ./tests/ReleasePublishing.ps1
+        run: ./tests/ReleasePublishingExit.ps1
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-release

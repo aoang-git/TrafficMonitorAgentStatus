@@ -98,3 +98,6 @@ try {
   if (!$resolved.StartsWith($workspace+'\build\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe release fixture cleanup' }
   if (Test-Path -LiteralPath $resolved) { Remove-Item -LiteralPath $resolved -Recurse -Force }
 }
+# Expected mock CLI failures must not leak into GitHub Actions' pwsh wrapper.
+# This is reached only after all assertions and cleanup succeed.
+exit 0
